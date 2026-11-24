@@ -19,6 +19,8 @@ No unreleased changes.
 - Pinned the installed system packages in both Dockerfiles and the CI runner.
 - Run PostgreSQL test clients from the same digest-pinned image as the database service.
 - Corrected the PostgreSQL service health-check argument so the CI container starts reliably.
+- Include the package build backend and its dependencies in the generated Python constraints lock.
+- Cache pinned system-package downloads between CI runs.
 
 ## 0.1.0 - 2026-11-24 (preview)
 
