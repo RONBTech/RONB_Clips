@@ -24,6 +24,67 @@ class CreatorInput(BaseModel):
     clip_length: float | None = None
 
 
+class CreatorProfileView(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    platform: str = ""
+    name: str = ""
+    followers: str = ""
+    pic: str = ""
+    live: bool = False
+    live_at: float = 0
+    viewers: int = 0
+    channel: str = ""
+
+
+class CreatorLogView(BaseModel):
+    t: float
+    msg: str
+
+
+class CreatorView(BaseModel):
+    """A creator workspace plus live profile and recent activity details."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str
+    created: float = 0
+    channel: str = ""
+    channels: dict[str, str] = Field(default_factory=dict)
+    style: str = "bounce"
+    layout: str = "blur"
+    captions: bool = True
+    min_len: int = 15
+    max_len: int = 60
+    max_clips: int = 6
+    min_score: int = 80
+    auto_watch: bool = False
+    buffer_min: int = 20
+    live_per_hour: int = 4
+    ai_every_min: int = 3
+    ai_only_on_spike: bool = True
+    auto_jump_pct: int = 60
+    plan: str = "free"
+    decide_mode: str = "both"
+    must_clip_min: int = 0
+    min_gap_min: int = 2
+    game: str = ""
+    trigger_words: str = ""
+    autopost: bool = False
+    accounts: list[str] = Field(default_factory=list)
+    post_min_score: int = 75
+    post_gap_min: int = 45
+    daily_cap: int = 6
+    privacy: str = "public"
+    post_footer: str = ""
+    rate_per_1k: float = 0
+    profile: CreatorProfileView = Field(default_factory=CreatorProfileView)
+    profiles: dict[str, CreatorProfileView] = Field(default_factory=dict)
+    live_job: str | None = None
+    log: list[CreatorLogView] = Field(default_factory=list)
+
+
 class AISettingsInput(BaseModel):
     provider: str
     models: str | list[str]

@@ -1,7 +1,5 @@
 """Creator workspaces and live recording routes."""
 
-from typing import Any
-
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
@@ -10,6 +8,7 @@ from . import api_common as common
 from .models import (
     ClipNowInput,
     CreatorInput,
+    CreatorView,
     DeletedView,
     GoLiveInput,
     JobView,
@@ -72,14 +71,14 @@ def creator_avatar(cid: str, p: str = ""):
     return FileResponse(f, media_type=prof["pic"], headers={"Cache-Control": "private, max-age=86400"})
 
 
-@router.get("/api/creators", response_model=list[dict[str, Any]], response_model_exclude_unset=True)
+@router.get("/api/creators", response_model=list[CreatorView], response_model_exclude_unset=True)
 def list_creators(limit: int = 100, offset: int = 0):
     limit, offset = common.bounds(limit, offset)
     rows = common.creator_rows()
     return rows[offset : offset + limit]
 
 
-@router.post("/api/creators", response_model=dict[str, Any], response_model_exclude_unset=True)
+@router.post("/api/creators", response_model=CreatorView, response_model_exclude_unset=True)
 def new_creator(body: CreatorInput):
     data = body.model_dump(exclude_unset=True)
     channel_ok(data)
@@ -94,7 +93,7 @@ def new_creator(body: CreatorInput):
     return c
 
 
-@router.put("/api/creators/{cid}", response_model=dict[str, Any], response_model_exclude_unset=True)
+@router.put("/api/creators/{cid}", response_model=CreatorView, response_model_exclude_unset=True)
 def edit_creator(cid: str, body: CreatorInput):
     data = body.model_dump(exclude_unset=True)
     common.throttle("cedit:" + ctx.uid(), 60, 600)

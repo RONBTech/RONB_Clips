@@ -98,7 +98,7 @@ r = c.get("/api/creators")
 check("the new workspace is listed", [x["id"] for x in r.json()], [CID])
 check("a listed workspace has a log", r.json()[0]["log"], [])
 
-with patch.object(api_common, "creator_rows", return_value=[{"id": str(i)} for i in range(5)]) as rows:
+with patch.object(api_common, "creator_rows", return_value=[{"id": str(i), "name": f"Creator {i}"} for i in range(5)]) as rows:
     check(
         "creator list honours offset and limit",
         [x["id"] for x in c.get("/api/creators", params={"limit": 2, "offset": 1}).json()],

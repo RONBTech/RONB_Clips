@@ -26,8 +26,7 @@ sys.path.insert(0, ".")
 
 import sqlalchemy as sa  # noqa: E402
 
-import studio  # noqa: E402 - the package itself holds the usage record helpers
-from studio import ai, auth, config, creators, ctx, db, feedback, notices, sync_api  # noqa: E402
+from studio import ai, auth, config, creators, ctx, db, feedback, notices, sync_api, usage  # noqa: E402
 
 fails = []
 DATA = Path(os.environ["RONBCLIPS_DATA"])
@@ -220,11 +219,11 @@ check("the background loop refreshes stale creators", refreshed, ["c1"])
 check("the background loop checks every five minutes", slept[0], 300)
 
 # ------------------------------------------------------------------------------- the package's usage record
-studio._brief.clear()
-studio.forget(UID)
-studio.set_context("c1", "a place")
+usage._brief.clear()
+usage.forget(UID)
+usage.set_context("c1", "a place")
 version = ctx.version(UID)
-studio.record(10, 5, "clip")
+usage.record(10, 5, "clip")
 check("recording AI use wakes the page", ctx.version(UID) > version, True)
 with db.engine.connect() as c:
     u = db.usage.c
@@ -234,27 +233,27 @@ check(
     (row["tokens_in"], row["tokens_out"], row["purpose"], row["creator"], row["place"]),
     (10, 5, "clip", "c1", "a place"),
 )
-check("recording AI use drops the cached summary", UID not in studio._brief, True)
+check("recording AI use drops the cached summary", UID not in usage._brief, True)
 
 with ctx.as_user(None):
     n = None
     with db.engine.connect() as c:
         n = c.execute(sa.select(sa.func.count()).select_from(db.usage)).scalar()
-    studio.record(1, 1, "nobody")
+    usage.record(1, 1, "nobody")
     with db.engine.connect() as c:
         check("a background thread with no user records nothing", c.execute(sa.select(sa.func.count()).select_from(db.usage)).scalar(), n)
 
-check("the day key is a date", len(studio._day(time.time())), 10)
-check("token totals add both directions", str(studio._tokens()), str(db.usage.c.tokens_in + db.usage.c.tokens_out))
+check("the day key is a date", len(usage._day(time.time())), 10)
+check("token totals add both directions", str(usage._tokens()), str(db.usage.c.tokens_in + db.usage.c.tokens_out))
 
-studio.set_context("c2", "another place")
+usage.set_context("c2", "another place")
 with db.engine.begin() as c:
     c.execute(
         db.usage.insert().values(
             user_id=UID, t=time.time(), tokens_in=7, tokens_out=3, purpose="title", creator="c2", place="another place"
         )
     )
-check("a new AI call invalidates the brief", UID not in studio._brief, True)
+check("a new AI call invalidates the brief", UID not in usage._brief, True)
 
 with (
     patch.object(ai, "ready", return_value=True),
@@ -262,7 +261,7 @@ with (
     patch.object(ai, "models", return_value=["m1", "m2"]),
     patch.object(ai, "problem_text", return_value=""),
 ):
-    brief = studio.brief()
+    brief = usage.brief()
     check(
         "the brief reports today's calls",
         (brief["ready"], brief["provider"], brief["model"], brief["today_calls"]),
@@ -271,12 +270,12 @@ with (
     check("the brief reports today's tokens", brief["today_tokens"], 25)
     with db.engine.begin() as c:
         c.execute(db.usage.insert().values(user_id=UID, t=time.time(), tokens_in=1, tokens_out=1, purpose="extra"))
-    check("the brief is cached for ten seconds", studio.brief()["today_calls"], 2)
-    studio.forget(UID)
-    check("forget recomputes the brief", studio.brief()["today_calls"], 3)
-    studio._brief[UID] = (time.time() - 100, {"stale": True})
-    studio.forget_all()
-    check("forget_all clears every cached brief", UID not in studio._brief, True)
+    check("the brief is cached for ten seconds", usage.brief()["today_calls"], 2)
+    usage.forget(UID)
+    check("forget recomputes the brief", usage.brief()["today_calls"], 3)
+    usage._brief[UID] = (time.time() - 100, {"stale": True})
+    usage.forget_all()
+    check("forget_all clears every cached brief", UID not in usage._brief, True)
 
     with db.engine.begin() as c:
         c.execute(
@@ -284,7 +283,7 @@ with (
                 user_id=UID, t=time.time() - 86400, tokens_in=4, tokens_out=6, purpose="clip", creator="c1", place="old"
             )
         )
-    summary = studio.summary({"c1": "Creator One", "c2": "Creator Two"})
+    summary = usage.summary({"c1": "Creator One", "c2": "Creator Two"})
     check("the summary counts every call", (summary["calls_total"], summary["tokens_total"]), (4, 37))
     check("the summary has thirty days", len(summary["daily"]), 30)
     check("the summary groups by purpose", summary["by_purpose"][0][0] in ("clip", "title"), True)

@@ -1,6 +1,6 @@
 # Changelog
 
-Changes are recorded here for each release. Version entries follow Semantic Versioning. The first stable `1.0.0` release has not been published yet; `pyproject.toml` currently identifies the preview package as `0.1.0`.
+Changes are recorded here for each release. Version entries follow Semantic Versioning. The first stable `1.0.0` release has not been published yet; `pyproject.toml` currently identifies the preview package as `0.1.1`.
 
 ## Unreleased
 
@@ -13,6 +13,7 @@ No unreleased changes.
 - Multi-architecture CPU images for `linux/amd64` and `linux/arm64`, with channel tags for preview, staging and stable releases.
 - A Docker Compose smoke test and ARM64 image boot test under QEMU.
 - A browser assertion for keyboard tab order.
+- Typed request and response schemas for creator workspace endpoints.
 
 ### Changed
 
@@ -21,6 +22,9 @@ No unreleased changes.
 - Corrected the PostgreSQL service health-check argument so the CI container starts reliably.
 - Include the package build backend and its dependencies in the generated Python constraints lock.
 - Cache pinned system-package downloads between CI runs.
+- Pin the runtime image to the Debian Bookworm variant required by its pinned apt packages.
+- Prevent the notification popover from reopening after Escape during its opening animation, and return keyboard focus to its trigger.
+- Make the alert and media deep tests independent of the operating system running them.
 
 ## 0.1.0 - 2026-11-24 (preview)
 
