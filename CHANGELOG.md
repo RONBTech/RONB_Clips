@@ -4,12 +4,20 @@ Changes are recorded here for each release. Version entries follow Semantic Vers
 
 ## Unreleased
 
+No unreleased changes.
+
+## 0.1.1 - 2026-11-24 (preview)
+
 ### Added
 
-- Architecture and request-flow diagrams, generated API documentation, contributor and troubleshooting guides.
-- Database upgrade notes that call out the destructive removal in migration 3.
-- CI checks for environment-example drift and frontend assets.
-- Stable-version support and compatibility policy.
+- Multi-architecture CPU images for `linux/amd64` and `linux/arm64`, with channel tags for preview, staging and stable releases.
+- A Docker Compose smoke test and ARM64 image boot test under QEMU.
+- A browser assertion for keyboard tab order.
+
+### Changed
+
+- Pinned the installed system packages in both Dockerfiles and the CI runner.
+- Corrected the PostgreSQL service health-check argument so the CI container starts reliably.
 
 ## 0.1.0 - 2026-11-24 (preview)
 

@@ -75,6 +75,12 @@ until then uploads from the API stay private.
   few minutes and says so; uploads and Twitch or Kick links keep working.
 - **Updates**: `git pull && docker compose up -d --build`. A restart pauses videos in progress (they pick up
   where they stopped) and live recordings (clips already found are finished from the saved stream).
+- **Rollback**: choose the last known-good release tag from GitHub Releases and set
+  `RONBCLIPS_IMAGE=ghcr.io/ronbtech/ronb_clips:<version>` in `.env`. Keep the data folder and database backup
+  made for that deployment. Stop the app, restore the matching data folder and database backup (the PostgreSQL
+  target must be recreated or empty), then start the selected image with `docker compose pull app && docker compose
+  up -d --no-build`. Check `/readyz`, `/health/detail`, the dashboard, and one recent clip before reopening access.
+  Do not restore a backup made by a newer schema into an older release unless its release notes explicitly allow it.
 - **Public access**: a server deployment exposes the local owner's app to whoever can reach it. Keep limits in
   `.env` sensible and put the site behind your own access control. See "Threat assumptions" below.
 - **Pinned images and packages**: the Docker and Compose images are pinned to digests, every Python dependency is

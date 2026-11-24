@@ -285,6 +285,15 @@ def main(argv=None):
         check((page.locator("#title span").inner_text() or "").strip() == "Home", "The home page header is not 'Home'.")
         check(page.locator("#addform.composer").count() == 1, "The add/composer form was not drawn.")
         check(page.locator("#global-state").get_attribute("aria-live") == "polite", "Global loading status is not announced politely.")
+        tour = page.locator("#tour .tr-x")
+        try:
+            tour.wait_for(state="visible", timeout=3000)
+        except Exception:
+            pass
+        if tour.count():
+            tour.click()
+            page.wait_for_selector("#tour", state="detached", timeout=8000)
+            steps.append("closed the first-run tour overlay")
         # Basic accessible-name gate across visible controls, plus a useful ARIA snapshot.
         unnamed = page.locator("button:visible, a:visible, input:visible, select:visible, textarea:visible").evaluate_all(
             "els => els.filter(e => !e.disabled && !(e.getAttribute('aria-label') || e.getAttribute('aria-labelledby') || e.title || e.innerText.trim() || (e.labels && [...e.labels].some(l => l.innerText.trim())))).map(e => e.outerHTML)"
@@ -292,6 +301,13 @@ def main(argv=None):
         check(not unnamed, "Visible interactive controls need accessible names: " + " | ".join(unnamed))
         nav_snapshot = page.locator("#nav").aria_snapshot()
         check("Home" in nav_snapshot and "All videos" in nav_snapshot, "Main navigation ARIA snapshot is missing named destinations.")
+        page.locator("#collapseBtn").focus()
+        page.keyboard.press("Tab")
+        tab_target = page.evaluate("document.activeElement.outerHTML")
+        check(
+            page.locator("#nav .nav-item").first.evaluate("e => e === document.activeElement"),
+            "Tab order should move from the sidebar control to the first main-navigation item; got " + tab_target,
+        )
         steps.append("checked visible controls for accessible names and inspected the main navigation ARIA snapshot")
         # Tab focus must be visible, and native Enter/Space activation must work.
         page.locator("#collapseBtn").focus()
@@ -303,18 +319,6 @@ def main(argv=None):
         check("mini" not in (page.locator("#app").get_attribute("class") or ""), "Space did not restore the sidebar.")
         steps.append("verified visible keyboard focus and Space activation")
         steps.append(f"opened home page (title {title!r}) and waited for the shell drawn by shell.js")
-
-        # A fresh data folder shows the guided tour after ~500 ms. Close it with
-        # its real close button so it cannot intercept later clicks.
-        tour = page.locator("#tour .tr-x")
-        try:
-            tour.wait_for(state="visible", timeout=3000)
-        except Exception:
-            pass  # the tour is only shown once, on a fresh data folder
-        if tour.count():
-            tour.click()
-            page.wait_for_selector("#tour", state="detached", timeout=8000)
-            steps.append("closed the first-run tour overlay")
 
         # Failure states stay visible until their request succeeds.
         page.route("**/api/status", abort_api)
@@ -385,6 +389,7 @@ def main(argv=None):
         page.locator("#foot [data-act='bell']").click()
         page.wait_for_selector("#bellpop:not([hidden])", state="visible")
         page.keyboard.press("Escape")
+        page.wait_for_function("() => !document.querySelector('#bellpop').classList.contains('open')")
         check(
             "open" not in (page.locator("#bellpop").get_attribute("class") or "").split(), "Escape did not close the notifications popover."
         )

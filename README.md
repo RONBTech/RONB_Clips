@@ -163,7 +163,7 @@ are sent to GitHub; set `RONBCLIPS_UPDATE_CHECK=0` to turn the check off. Back u
 docker compose up -d --build
 ```
 
-The release workflow publishes versioned Linux images to `ghcr.io/ronbtech/ronb_clips` when a matching `vX.Y.Z` tag is pushed. To use a published image instead of building from source, set `RONBCLIPS_IMAGE=ghcr.io/ronbtech/ronb_clips:X.Y.Z` in `.env`, then run `docker compose pull app` and `docker compose up -d --no-build`. The package must be public in GitHub Packages for unauthenticated pulls.
+The release workflow publishes versioned Linux images to `ghcr.io/ronbtech/ronb_clips` when a matching `vX.Y.Z` tag is pushed. Preview tags (`0.x`) receive the `preview` channel; semantic prereleases receive `staging`; stable tags (`1.x` and later) receive `stable` and `latest`. Images publish for `linux/amd64` and `linux/arm64`; each release checks the manifest and boots the ARM64 image under QEMU. To use a published image instead of building from source, set `RONBCLIPS_IMAGE=ghcr.io/ronbtech/ronb_clips:X.Y.Z` in `.env`, then run `docker compose pull app` and `docker compose up -d --no-build`. The package must be public in GitHub Packages for unauthenticated pulls.
 
 ## How it behaves under load
 
