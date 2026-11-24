@@ -17,6 +17,7 @@ No unreleased changes.
 ### Changed
 
 - Pinned the installed system packages in both Dockerfiles and the CI runner.
+- Run PostgreSQL test clients from the same digest-pinned image as the database service.
 - Corrected the PostgreSQL service health-check argument so the CI container starts reliably.
 
 ## 0.1.0 - 2026-11-24 (preview)

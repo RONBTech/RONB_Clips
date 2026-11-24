@@ -25,7 +25,13 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install system tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5 postgresql-client-16=16.15-0ubuntu0.24.04.1
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
+      - name: Install pinned PostgreSQL client tools
+        run: |
+          docker pull postgres:16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d
+          sudo install -m 755 scripts/pg_client.sh /usr/local/bin/ronbclips-pg-client
+          sudo ln -sf ronbclips-pg-client /usr/local/bin/pg_dump
+          sudo ln -sf ronbclips-pg-client /usr/local/bin/psql
       - name: Install dependencies
         run: python -m pip install --upgrade "pip==26.3" && python -m pip install -c constraints.txt -r requirements-dev.txt
       - name: Compile Python
@@ -48,7 +54,8 @@ jobs:
           RONBCLIPS_COVERAGE: "1"
       - name: Make throwaway backup databases
         run: |
-          PGPASSWORD=testpassword psql -h 127.0.0.1 -p 5432 -U ronbclips -d ronbclips_test -v ON_ERROR_STOP=1 \
+          export PGPASSWORD=testpassword
+          psql -h 127.0.0.1 -p 5432 -U ronbclips -d ronbclips_test -v ON_ERROR_STOP=1 \
             -c 'CREATE DATABASE ronbclips_backup_source;' \
             -c 'CREATE DATABASE ronbclips_backup_target;'
       - name: Run tests (PostgreSQL)
@@ -58,11 +65,11 @@ jobs:
           RONBCLIPS_TEST_BACKUP_SOURCE_URL: postgresql+psycopg://ronbclips:testpassword@127.0.0.1:5432/ronbclips_backup_source
           RONBCLIPS_TEST_BACKUP_TARGET_URL: postgresql+psycopg://ronbclips:testpassword@127.0.0.1:5432/ronbclips_backup_target
           RONBCLIPS_TEST_PG_ADMIN_URL: postgresql+psycopg://ronbclips:testpassword@127.0.0.1:5432/postgres
-          RONBCLIPS_TEST_PG_BIN: /usr/bin
+          RONBCLIPS_TEST_PG_BIN: /usr/local/bin
           RONBCLIPS_COVERAGE: "0"
       - name: Real browser test
         run: |
-          python -m playwright install --with-deps chromium
+          python -m playwright install chromium
           python scripts/e2e_browser.py
       - name: Docker Compose smoke test
         env:
