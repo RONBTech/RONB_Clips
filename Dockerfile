@@ -4,8 +4,8 @@ FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b5
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ffmpeg=7:5.1.9-0+deb12u1 ca-certificates=20230311+deb12u1 bzip2=1.0.8-5+b1 \
-      fonts-noto-core=20201225-1 fonts-noto-cjk=1:20220127+repack1-1 \
+      ffmpeg ca-certificates bzip2 \
+      fonts-noto-core fonts-noto-cjk \
  && rm -rf /var/lib/apt/lists/*
 # yt-dlp needs a JavaScript runtime for YouTube
 COPY --from=denoland/deno:bin@sha256:b507583d3c68ba69f3ed2ce5969ae5b8b70f43421c781279c7aea06435263543 /deno /usr/local/bin/deno
