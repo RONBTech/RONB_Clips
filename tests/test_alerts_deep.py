@@ -287,10 +287,14 @@ fake_time = SimpleNamespace(sleep=sleep, strftime=lambda fmt: "", localtime=lamb
 old_time = alerts.time
 alerts.time = fake_time
 try:
-    try:
-        alerts.keep_awake_loop(lambda: state[0])
-    except StopLoop:
-        pass
+    # Exercise the Windows-only branch on every CI platform. The production
+    # function correctly returns immediately on Unix, so the test must mock
+    # the platform check instead of relying on the host OS.
+    with patch(alerts.os, "name", "nt"):
+        try:
+            alerts.keep_awake_loop(lambda: state[0])
+        except StopLoop:
+            pass
 finally:
     alerts.time = old_time
     if old_ctypes is None:

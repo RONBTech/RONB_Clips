@@ -136,7 +136,11 @@ def fake_run(cmd, **kw):
     return FakeCompleted(stdout="hello")
 
 
-fake_subprocess = SimpleNamespace(run=fake_run, TimeoutExpired=subprocess.TimeoutExpired, CREATE_NO_WINDOW=subprocess.CREATE_NO_WINDOW)
+fake_subprocess = SimpleNamespace(
+    run=fake_run,
+    TimeoutExpired=subprocess.TimeoutExpired,
+    CREATE_NO_WINDOW=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+)
 with patch(media, "subprocess", fake_subprocess):
     check("run returns the output of a successful command", media.run(["ffprobe", "a"]), "hello")
     check(
