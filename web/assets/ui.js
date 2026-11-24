@@ -49,14 +49,16 @@ export function ask(title, text, okLabel = "Confirm", danger = false) {
 }
 export const avatarUrl = (c, k) => `/api/creators/${encodeURIComponent(c.id)}/avatar?${k ? "p=" + k + "&" : ""}v=${Math.round(((k ? c.profiles?.[k] : c.profile) || {}).at || 0)}`;
 export const fmtK = n => (n = Number(n) || 0) >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M" : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, "") + "K" : String(n);
-export function closePops(except) { ["bellpop"].forEach(id => { const p = $("#" + id); if (p !== except && !p.hidden) { p.classList.remove("open"); setTimeout(() => { if (!p.classList.contains("open")) p.hidden = true; }, 180); } }); }
+export function closePops(except) { ["bellpop"].forEach(id => { const p = $("#" + id); if (p !== except && !p.hidden) { p.dataset.opening = "false"; p.classList.remove("open"); $("[data-act=bell]")?.setAttribute("aria-expanded", "false"); setTimeout(() => { if (!p.classList.contains("open")) p.hidden = true; }, 180); } }); }
 export function openPop(p, anchor) {
   closePops(p); p.hidden = false;
+  p.dataset.opening = "true";
+  anchor?.setAttribute("aria-expanded", "true");
   // beside the sidebar, bottom lined up with the button that opened it
   const side = $(".side").getBoundingClientRect(), a = anchor?.getBoundingClientRect();
   if (innerWidth > 900) { p.style.left = side.right + 8 + "px"; p.style.bottom = Math.max(12, innerHeight - (a ? a.bottom + 6 : side.bottom - 12)) + "px"; }
   else { p.style.left = ""; p.style.bottom = ""; }
-  requestAnimationFrame(() => p.classList.add("open"));
+  requestAnimationFrame(() => { if (p.dataset.opening === "true") { p.classList.add("open"); p.dataset.opening = "false"; } });
 }
 /* feedback goes to the maker's Instagram. A problem's message is copied first, so it can be pasted there. */
 export async function openFeedback(kind = "bug", context = "") {

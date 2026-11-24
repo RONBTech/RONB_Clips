@@ -389,10 +389,12 @@ def main(argv=None):
         page.locator("#foot [data-act='bell']").click()
         page.wait_for_selector("#bellpop:not([hidden])", state="visible")
         page.keyboard.press("Escape")
-        page.wait_for_function("() => !document.querySelector('#bellpop').classList.contains('open')")
+        page.wait_for_function("() => document.querySelector('#bellpop').hidden && !document.querySelector('#bellpop').classList.contains('open')")
         check(
             "open" not in (page.locator("#bellpop").get_attribute("class") or "").split(), "Escape did not close the notifications popover."
         )
+        check(page.locator("#foot [data-act='bell']").evaluate("el => el.getAttribute('aria-expanded')") == "false", "Closing notifications did not update its expanded state.")
+        check(page.locator("#foot [data-act='bell']").evaluate("el => el === document.activeElement"), "Escape did not return focus to Notifications.")
         steps.append("verified Escape closes notifications")
 
         # ---- interaction 3: All videos in the sidebar ------------------------

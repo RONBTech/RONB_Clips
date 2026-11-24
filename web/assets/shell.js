@@ -84,7 +84,7 @@ export async function openBell() {
 }
 export async function markRead() { try { await send("/api/notifications/read"); S.status.unread = 0; drawShell(); } catch {} }
 document.addEventListener("click", e => { if (!e.target.closest(".pop, .social-wrap, [data-act=bell]")) { closePops(); $$(".social-menu").forEach(m => { m.hidden = true; m.previousElementSibling?.setAttribute("aria-expanded", "false"); }); } });
-document.addEventListener("keydown", e => { if (e.key === "Escape") { closePops(); $$(".social-menu").forEach(m => { m.hidden = true; m.previousElementSibling?.setAttribute("aria-expanded", "false"); }); } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { const bellOpen = !$("#bellpop").hidden; closePops(); if (bellOpen) { e.preventDefault(); $("[data-act=bell]")?.focus(); } $$(".social-menu").forEach(m => { m.hidden = true; m.previousElementSibling?.setAttribute("aria-expanded", "false"); }); } });
 /* new notifications pop up as a small card with a soft chime */
 let lastNotice = Number(localStorage.getItem("lastNotice") || 0), chimeCtx = null;
 function chime() {
