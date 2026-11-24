@@ -1,7 +1,7 @@
 # The speech-to-text machine: the same code, built for a graphics card (NVIDIA, CUDA 12).
 # Build from the project root:  docker build -f deploy/gpu/Dockerfile -t ronbclips-asr .
 # Pinned to a digest; the NVIDIA wheels below are pinned in the pip commands as well.
-FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
+FROM python:3.11.18-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
