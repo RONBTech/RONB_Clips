@@ -1,24 +1,49 @@
 """Post queue: decides when each finished clip goes to which account, posts it, and tracks views."""
+
+import json
 import secrets
 import threading
 import time
 from pathlib import Path
 
-import json
-
-from . import accounts, alerts, config, creators, ctx, jobs, live
+from . import accounts, alerts, config, creators, ctx, jobs, live, logs
 
 _lock = threading.RLock()
+_stopping = False
 _FILE = config.DATA_DIR / "posts.json"
 try:
     _posts: list = json.loads(_FILE.read_text(encoding="utf-8")) if _FILE.exists() else []
 except ValueError:
     _posts = []
+_account_posts: dict = {}
+
+
+def _index_post(p):
+    uid, aid = p.get("user"), p.get("account")
+    if uid and aid:
+        bucket = _account_posts.setdefault((uid, aid), [])
+        if p not in bucket:
+            bucket.append(p)
+
+
+def _rebuild_indexes():
+    _account_posts.clear()
+    for p in _posts:
+        _index_post(p)
+
+
+def _mine_account(account_id: str) -> list:
+    return list(_account_posts.get((ctx.uid(), account_id), ()))
+
+
+_rebuild_indexes()
 
 
 def _mine() -> list:
     u = ctx.uid()
     return [p for p in _posts if p.get("user") == u]
+
+
 OPEN = ("scheduled", "posting")
 
 
@@ -34,8 +59,9 @@ def forget(uid: str):
     with _lock:
         for p in _posts:
             if p.get("user") == uid:
-                p["status"] = "deleted"          # the posting loop may be holding this one already: it then skips it
+                p["status"] = "deleted"  # the posting loop may be holding this one already: it then skips it
         _posts[:] = [p for p in _posts if p.get("user") != uid]
+        _rebuild_indexes()
         _save()
 
 
@@ -46,7 +72,9 @@ def _day(t):
 def _mirror(p):
     """Copy the post's state onto its clip so the clip card can show it."""
     job = jobs.get(p["job"])
-    clip = next((c for c in job["clips"] if c["id"] == p["clip"]), None) if job else None
+    if not job:
+        return
+    clip = next((c for c in job["clips"] if c["id"] == p["clip"]), None)
     if clip is not None:
         clip.setdefault("posts", {})[p["id"]] = {k: p.get(k) for k in ("account_name", "platform", "status", "url", "due_at", "error")}
         jobs.save(job)
@@ -54,10 +82,23 @@ def _mirror(p):
 
 def _next_slot(account_id, gap_min, cap):
     """Earliest time that respects the gap between posts and the daily cap for this account."""
-    mine = [p for p in _mine() if p["account"] == account_id and p["status"] in OPEN + ("posted",)]
+    mine = [p for p in _mine_account(account_id) if p["status"] in OPEN + ("posted",)]
     t = max(time.time(), max((p.get("posted_at") or p["due_at"] for p in mine), default=0) + gap_min * 60)
     for _ in range(30):
         if sum(1 for p in mine if _day(p.get("posted_at") or p["due_at"]) == _day(t)) < cap:
+            break
+        lt = time.localtime(t + 86400)
+        t = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 9, 0, 0, 0, 0, -1))  # 9:00 next day
+    return t
+
+
+def _now_slot(account_id, gap_min, cap):
+    """The earliest time allowed for a post pressed right now: after the gap since the last real post, and
+    inside today's cap. Posts already scheduled for later do not push it back, but the cap still applies."""
+    posted = [p for p in _mine_account(account_id) if p["status"] == "posted"]
+    t = max(time.time(), max((p.get("posted_at") or 0 for p in posted), default=0) + gap_min * 60)
+    for _ in range(30):
+        if sum(1 for p in posted if _day(p["posted_at"]) == _day(t)) < cap:
             break
         lt = time.localtime(t + 86400)
         t = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 9, 0, 0, 0, 0, -1))  # 9:00 next day
@@ -72,15 +113,34 @@ def enqueue(job, clip, account_ids, now=False) -> list:
             acc = accounts.get(aid)
             if not acc:
                 continue
-            if any(p["job"] == job["id"] and p["clip"] == clip["id"] and p["account"] == aid
-                   and p["status"] in OPEN + ("posted",) for p in _mine()):
+            if any(
+                p["job"] == job["id"] and p["clip"] == clip["id"] and p["account"] == aid and p["status"] in OPEN + ("posted",)
+                for p in _mine_account(aid)
+            ):
                 continue  # never post the same clip to the same account twice
-            due = time.time() if now else _next_slot(aid, c["post_gap_min"], c["daily_cap"])
-            p = {"id": secrets.token_hex(8), "user": ctx.uid(), "job": job["id"], "clip": clip["id"], "creator": job["creator"],
-                 "account": aid, "account_name": acc["name"], "platform": acc["platform"], "status": "scheduled",
-                 "due_at": due, "created": time.time(), "title": clip.get("title") or clip.get("hook") or "Clip",
-                 "score": clip.get("score", 0), "tries": 0, "url": "", "remote_id": "", "error": None, "views": None}
+            due = _now_slot(aid, c["post_gap_min"], c["daily_cap"]) if now else _next_slot(aid, c["post_gap_min"], c["daily_cap"])
+            p = {
+                "id": secrets.token_hex(8),
+                "user": ctx.uid(),
+                "job": job["id"],
+                "clip": clip["id"],
+                "creator": job["creator"],
+                "account": aid,
+                "account_name": acc["name"],
+                "platform": acc["platform"],
+                "status": "scheduled",
+                "due_at": due,
+                "created": time.time(),
+                "title": clip.get("title") or clip.get("hook") or "Clip",
+                "score": clip.get("score", 0),
+                "tries": 0,
+                "url": "",
+                "remote_id": "",
+                "error": None,
+                "views": None,
+            }
             _posts.append(p)
+            _index_post(p)
             made.append(p)
         _save()
     for p in made:
@@ -97,11 +157,14 @@ def on_clip_ready(job, clip):
         return  # includes hand-made clips (score 0): those wait for you to press Post
     made = enqueue(job, clip, c["accounts"])
     if made:
+        logs.emit("post.queued", msg="Post queued.", job_id=job["id"], clip_id=clip["id"], accounts=len(made))
         creators.log(c["id"], f"Queued for {len(made)} account(s): {clip.get('title') or clip.get('hook')}")
 
 
 def _caption(clip, creator):
-    tags = " ".join("#" + h for h in clip.get("hashtags", []))
+    tags = (
+        "" if clip.get("fixed_description") or clip.get("hashtags_in_description") else " ".join("#" + h for h in clip.get("hashtags", []))
+    )
     return "\n\n".join(x for x in (clip.get("description", ""), tags, creator.get("post_footer", "")) if x)
 
 
@@ -109,12 +172,14 @@ def _post(p):
     job = jobs.get(p["job"])
     clip = next((c for c in job["clips"] if c["id"] == p["clip"]), None) if job else None
     acc = accounts.get(p["account"])
+    title = ""
     try:
-        if not clip or clip.get("status") != "done":
+        file = clip.get("file") if clip else None
+        if not job or not clip or not file or clip.get("status") != "done":
             raise RuntimeError("The clip no longer exists or is not finished.")
         if not acc:
             raise RuntimeError("That account was disconnected.")
-        path = Path(job["dir"]) / "clips" / clip["file"]
+        path = Path(job["dir"]) / "clips" / file
         creator = creators.get(job["creator"]) or dict(creators.DEFAULTS, name="clips")
         title, cap = clip.get("title") or clip.get("hook") or "Clip", _caption(clip, creator)
         if acc["platform"] == "youtube":
@@ -125,8 +190,6 @@ def _post(p):
             rid, url = accounts.tiktok_upload(acc, path, f"{title}\n\n{cap}", creator["privacy"])
         else:
             raise RuntimeError("That kind of account is no longer supported.")
-        p.update(status="posted", posted_at=time.time(), remote_id=rid, url=url, error=None)
-        creators.log(p["creator"], f"Posted to {acc['name']}: {title}")
     except Exception as e:  # noqa: BLE001
         p["tries"] += 1
         p["error"] = str(e)[-300:]
@@ -134,19 +197,34 @@ def _post(p):
             p.update(status="scheduled", due_at=time.time() + 600)  # try again in 10 minutes
         else:
             p["status"] = "failed"
-            creators.log(p["creator"], f"Post failed on {p['account_name']}: {p['error']}")
-            alerts.notify(f"post failed on {p['account_name']} ({p['title']}): {p['error'][:200]}", kind="post")
+            try:
+                logs.emit("post.failed", "error", msg="Post failed.", post_id=p["id"], account=p["account_name"], error=p["error"][:200])
+                creators.log(p["creator"], f"Post failed on {p['account_name']}: {p['error']}")
+                alerts.notify(f"post failed on {p['account_name']} ({p['title']}): {p['error'][:200]}", kind="post")
+            except Exception:  # noqa: BLE001 - the post is already marked failed; a log slip must not leave it "posting"
+                pass
+        _save()
+        _mirror(p)
+        return
+    # The upload worked. That is written down before anything else runs: a slip while logging or copying the
+    # state onto the clip must never send this post round again, or the clip would be posted twice.
+    p.update(status="posted", posted_at=time.time(), remote_id=rid, url=url, error=None)
     _save()
-    _mirror(p)
+    try:
+        logs.emit("post.succeeded", msg="Post sent.", post_id=p["id"], account=acc["name"], job_id=p.get("job", ""))
+        creators.log(p["creator"], f"Posted to {acc['name']}: {title}")
+        _mirror(p)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _run():
-    while True:
+    while not _stopping:
         time.sleep(15)
         due = [p for p in list(_posts) if p["status"] == "scheduled" and p["due_at"] <= time.time() and p.get("user")]
         for p in due:
             try:
-                with ctx.as_user(p["user"]):
+                with ctx.as_user(p["user"], request_id=logs.background_id("post", p["id"])):
                     if accounts.settings()["paused"]:
                         continue
                     with _lock:
@@ -175,10 +253,10 @@ def _stats_for(recent):
 
 
 def _stats():
-    while True:
+    while not _stopping:
         for uid in {p.get("user") for p in _posts if p.get("user")}:
             try:
-                with ctx.as_user(uid):
+                with ctx.as_user(uid, request_id=logs.background_id("post", "stats")):
                     _stats_for([p for p in _mine() if p["status"] == "posted" and time.time() - p["posted_at"] < 14 * 86400])
             except Exception:  # noqa: BLE001
                 pass
@@ -211,20 +289,34 @@ def overview() -> dict:
     _posts = _mine()  # everything below is about the signed-in user only
     rows = []
     all_cs, all_js = creators.all_creators(), jobs.list_jobs()
+    # One pass over the videos and the posts, then each creator reads its own short list. Asking every creator
+    # about every video instead gets slower the more creators and videos someone has.
+    videos_of, posts_of = {}, {}
+    for j in all_js:
+        videos_of.setdefault(j["creator"], []).append(j)
+    for p in _posts:
+        posts_of.setdefault(p["creator"], []).append(p)
     for c in all_cs:
-        js = [j for j in all_js if j["creator"] == c["id"]]
+        js = videos_of.get(c["id"], ())
         clips = [k for j in js for k in j["clips"] if k.get("status") == "done"]
-        ps = [p for p in _posts if p["creator"] == c["id"]]
+        ps = posts_of.get(c["id"], ())
         views = sum(p["views"] or 0 for p in ps)
-        rows.append({
-            "id": c["id"], "name": c["name"],
-            "state": "recording" if live.active_for(c["id"]) else "waiting" if c["auto_watch"] and c["channel"] else "idle",
-            "autopost": c["autopost"] and bool(c["accounts"]),
-            "clips_today": sum(1 for k in clips if _day(k.get("made_at", 0)) == today), "clips_total": len(clips),
-            "posted_today": sum(1 for p in ps if p["status"] == "posted" and _day(p["posted_at"]) == today),
-            "posted_total": sum(1 for p in ps if p["status"] == "posted"),
-            "queued": sum(1 for p in ps if p["status"] in OPEN), "failed": sum(1 for p in ps if p["status"] == "failed"),
-            "views": views, "earnings": round(views / 1000 * c["rate_per_1k"], 2)})
+        rows.append(
+            {
+                "id": c["id"],
+                "name": c["name"],
+                "state": "recording" if live.active_for(c["id"]) else "waiting" if c["auto_watch"] and c["channel"] else "idle",
+                "autopost": c["autopost"] and bool(c["accounts"]),
+                "clips_today": sum(1 for k in clips if _day(k.get("made_at", 0)) == today),
+                "clips_total": len(clips),
+                "posted_today": sum(1 for p in ps if p["status"] == "posted" and _day(p["posted_at"]) == today),
+                "posted_total": sum(1 for p in ps if p["status"] == "posted"),
+                "queued": sum(1 for p in ps if p["status"] in OPEN),
+                "failed": sum(1 for p in ps if p["status"] == "failed"),
+                "views": views,
+                "earnings": round(views / 1000 * c["rate_per_1k"], 2),
+            }
+        )
     names = {c["id"]: c["name"] for c in all_cs}
     queue = sorted((p for p in _posts if p["status"] in OPEN), key=lambda p: p["due_at"])
     done = sorted((p for p in _posts if p["status"] in ("posted", "failed")), key=lambda p: -(p.get("posted_at") or p["due_at"]))[:15]
@@ -242,16 +334,24 @@ def overview() -> dict:
             posted[_day(p["posted_at"])] += 1
             views[_day(p["posted_at"])] += p["views"] or 0
     daily = [{"day": d, "clips": made[d], "posted": posted[d], "views": views[d]} for d in days]
-    return {"paused": accounts.settings()["paused"], "creators": rows, "posts": show, "daily": daily,
-            "alerts": alerts.configured(), "recording": len(live.active_mine())}
+    return {
+        "paused": accounts.settings()["paused"],
+        "creators": rows,
+        "posts": show,
+        "daily": daily,
+        "alerts": alerts.configured(),
+        "recording": len(live.active_mine()),
+    }
 
 
 def digest_text() -> str:
     o = overview()
-    lines = ["PeakCut daily summary"]
+    lines = ["RONB Clips daily summary"]
     for r in o["creators"]:
-        lines.append(f"- {r['name']}: {r['state']}, {r['clips_today']} clips today, {r['posted_today']} posted today, "
-                     f"{r['queued']} waiting, {r['failed']} failed, {r['views']} views")
+        lines.append(
+            f"- {r['name']}: {r['state']}, {r['clips_today']} clips today, {r['posted_today']} posted today, "
+            f"{r['queued']} waiting, {r['failed']} failed, {r['views']} views"
+        )
     if not o["creators"]:
         lines.append("No creators set up yet.")
     if o["paused"]:
@@ -260,6 +360,8 @@ def digest_text() -> str:
 
 
 def start():
+    global _stopping
+    _stopping = False
     with _lock:
         for p in _posts:
             if p["status"] == "posting":  # interrupted mid-upload last time
@@ -269,5 +371,12 @@ def start():
     threading.Thread(target=_run, daemon=True).start()
     threading.Thread(target=_stats, daemon=True).start()
     threading.Thread(target=alerts.digest_loop, args=(digest_text,), daemon=True).start()
-    threading.Thread(target=alerts.keep_awake_loop,
-                     args=(lambda: bool(live.active()) or any(p["status"] in OPEN for p in _posts),), daemon=True).start()
+    threading.Thread(
+        target=alerts.keep_awake_loop, args=(lambda: bool(live.active()) or any(p["status"] in OPEN for p in _posts),), daemon=True
+    ).start()
+
+
+def stop():
+    global _stopping
+    _stopping = True
+    logs.emit("post.stopped", msg="Posting loops are stopping; scheduled posts stay in the file for next time.")

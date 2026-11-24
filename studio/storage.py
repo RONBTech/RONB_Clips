@@ -1,10 +1,11 @@
-"""Where PeakCut keeps everything: one folder, which the owner can see, open and move.
+"""Where RONB Clips keeps everything: one folder, which the owner can see, open and move.
 
-Everything PeakCut makes or downloads lives in one folder: the videos, the clips, the recordings, the list of
-creators, the database and the speech model. By default that is the "data" folder inside PeakCut's own folder.
+Everything RONB Clips makes or downloads lives in one folder: the videos, the clips, the recordings, the list of
+creators, the database and the speech model. By default that is the "data" folder inside RONB Clips's own folder.
 It can be moved (to a bigger drive, for instance) from Settings, Storage: the choice is written to storage.json,
-and the next time PeakCut starts it moves what is there and carries on from the new place (see config.py; nothing
-is moved while PeakCut is running, when files are open)."""
+and the next time RONB Clips starts it moves what is there and carries on from the new place (see config.py; nothing
+is moved while RONB Clips is running, when files are open)."""
+
 import json
 import os
 import subprocess
@@ -29,7 +30,7 @@ def _size(folder: Path) -> int:
 
 
 def used_bytes() -> int:
-    """How much PeakCut's folder holds. Added up at most once a minute."""
+    """How much RONB Clips's folder holds. Added up at most once a minute."""
     if time.time() - _used["at"] > 60:
         _used.update(at=time.time(), bytes=_size(config.DATA_DIR))
     return _used["bytes"]
@@ -46,13 +47,16 @@ def full_message() -> str:
         free = shutil_free(config.DATA_DIR)
     except OSError:
         free = 0.0
-    return (f"The drive PeakCut saves to ({drive_of(config.DATA_DIR)}) is almost full: {free:.1f} GB free, and PeakCut needs "
-            f"at least {load.MIN_FREE_DISK_GB:g} GB to make clips safely. Free up some space on that drive, or move "
-            f"PeakCut's folder to a bigger drive in Settings, Storage.")
+    return (
+        f"The drive RONB Clips saves to ({drive_of(config.DATA_DIR)}) is almost full: {free:.1f} GB free, and RONB Clips needs "
+        f"at least {load.MIN_FREE_DISK_GB:g} GB to make clips safely. Free up some space on that drive, or move "
+        f"RONB Clips's folder to a bigger drive in Settings, Storage."
+    )
 
 
 def shutil_free(path: Path) -> float:
     import shutil
+
     return shutil.disk_usage(path).free / 1e9
 
 
@@ -68,38 +72,54 @@ def pending() -> str:
 
 def info(local: bool) -> dict:
     import shutil
+
     try:
         u = shutil.disk_usage(config.DATA_DIR)
         free, total = u.free / 1e9, u.total / 1e9
     except OSError:
         free, total = 0.0, 0.0
-    return {"path": str(config.DATA_DIR.resolve()), "drive": drive_of(config.DATA_DIR), "free_gb": round(free, 1),
-            "total_gb": round(total, 1), "used_gb": round(used_bytes() / 1e9, 2), "min_free_gb": load.MIN_FREE_DISK_GB,
-            "full": free < load.MIN_FREE_DISK_GB, "fixed": config.DATA_FROM == "env", "pending": pending(),
-            # opening a folder or showing a "choose folder" window only makes sense on the computer PeakCut runs on
-            "local": bool(local)}
+    return {
+        "path": str(config.DATA_DIR.resolve()),
+        "drive": drive_of(config.DATA_DIR),
+        "free_gb": round(free, 1),
+        "total_gb": round(total, 1),
+        "used_gb": round(used_bytes() / 1e9, 2),
+        "min_free_gb": load.MIN_FREE_DISK_GB,
+        "full": free < load.MIN_FREE_DISK_GB,
+        "fixed": config.DATA_FROM == "env",
+        "pending": pending(),
+        # opening a folder or showing a "choose folder" window only makes sense on the computer RONB Clips runs on
+        "local": bool(local),
+    }
 
 
 def open_folder():
-    """Show PeakCut's folder in the computer's file manager."""
+    """Show RONB Clips's folder in the computer's file manager."""
     p = str(config.DATA_DIR.resolve())
     if sys.platform == "win32":
-        os.startfile(p)                                   # noqa: S606 - the owner's own folder, on their own computer
+        os.startfile(p)  # noqa: S606 - the owner's own folder, on their own computer
     elif sys.platform == "darwin":
         subprocess.Popen(["open", p])
     else:
         subprocess.Popen(["xdg-open", p])
 
 
-_PICK = ("import tkinter as tk\nfrom tkinter import filedialog\nr = tk.Tk()\nr.withdraw()\nr.attributes('-topmost', True)\n"
-         "print(filedialog.askdirectory(title='Choose where PeakCut keeps its videos and clips') or '')\n")
+_PICK = (
+    "import tkinter as tk\nfrom tkinter import filedialog\nr = tk.Tk()\nr.withdraw()\nr.attributes('-topmost', True)\n"
+    "print(filedialog.askdirectory(title='Choose where RONB Clips keeps its videos and clips') or '')\n"
+)
 
 
 def pick_folder() -> str:
     """The computer's own "choose a folder" window. Returns the folder, or "" if it was closed or cannot be shown."""
     try:
-        r = subprocess.run([sys.executable, "-c", _PICK], capture_output=True, text=True, timeout=600,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        r = subprocess.run(
+            [sys.executable, "-c", _PICK],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
     except (OSError, subprocess.TimeoutExpired):
         return ""
     out = (r.stdout or "").strip().splitlines()
@@ -110,29 +130,31 @@ def change(path: str, move: bool = True) -> dict:
     """Choose a new folder. It is checked now (it can be made, written to, and has room) and used from the next
     start; with `move`, what is in the current folder is moved there then."""
     if config.DATA_FROM == "env":
-        raise ValueError("The folder is set with PEAKCUT_DATA in the .env file. Change it there, or remove that line to choose it here.")
+        raise ValueError("The folder is set with RONBCLIPS_DATA in the .env file. Change it there, or remove that line to choose it here.")
     raw = str(path or "").strip().strip('"')
     if not raw:
         raise ValueError("Choose a folder.")
     new = Path(os.path.expanduser(raw))
     if not new.is_absolute():
-        raise ValueError("Give the whole path of the folder, for example D:\\PeakCut.")
+        raise ValueError("Give the whole path of the folder, for example D:\\RONB Clips.")
     new, old = new.resolve(), config.DATA_DIR.resolve()
     if new == old:
-        raise ValueError("That is the folder PeakCut already uses.")
+        raise ValueError("That is the folder RONB Clips already uses.")
     if old in new.parents or new in old.parents:
-        raise ValueError("Choose a folder that is not inside PeakCut's current folder (or the other way round).")
+        raise ValueError("Choose a folder that is not inside RONB Clips's current folder (or the other way round).")
     try:
         new.mkdir(parents=True, exist_ok=True)
-        probe = new / ".peakcut-write-test"
+        probe = new / ".ronbclips-write-test"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink()
     except OSError:
-        raise ValueError("PeakCut can't write to that folder. Choose another one, or check the drive is connected.")
+        raise ValueError("RONB Clips can't write to that folder. Choose another one, or check the drive is connected.")
     need = used_bytes() / 1e9 if move and drive_of(new) != drive_of(old) else 0.0
     if shutil_free(new) < need + load.MIN_FREE_DISK_GB:
-        raise ValueError(f"There isn't enough room there: {shutil_free(new):.1f} GB free, and PeakCut needs about "
-                         f"{need + load.MIN_FREE_DISK_GB:.1f} GB.")
+        raise ValueError(
+            f"There isn't enough room there: {shutil_free(new):.1f} GB free, and RONB Clips needs about "
+            f"{need + load.MIN_FREE_DISK_GB:.1f} GB."
+        )
     data = {"path": str(new)}
     if move:
         data["move_from"] = str(old)

@@ -3,12 +3,13 @@
 Nothing has to be run by hand. (python -m studio.fetch_model still works, for getting it ahead of time.) It is
 about 480 MB. It is unpacked next to where it will live and moved into place only when it is whole, so a download
 that was cut off can never leave half a model behind."""
+
 import shutil
 import tarfile
 import threading
 import urllib.request
 
-from . import config
+from . import config, logs
 
 URL = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/{config.ASR_MODEL_NAME}.tar.bz2"
 _lock = threading.Lock()
@@ -37,11 +38,12 @@ def ensure() -> None:
         if ready():
             return
         state.update(doing=True, percent=0, error="")
-        print("\n  Downloading the speech model (one time, about 480 MB)...\n", flush=True)
+        logs.emit("model.download_started", msg="Downloading the speech model (one time, about 480 MB).")
         config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
         tmp, part = config.MODELS_DIR / "speech-model.tar.bz2", config.MODELS_DIR / "speech-model.unpacking"
         try:
-            urllib.request.urlretrieve(URL, tmp, _progress)
+            # URL is our fixed model download address, not caller input.
+            urllib.request.urlretrieve(URL, tmp, _progress)  # nosec B310
             shutil.rmtree(part, ignore_errors=True)
             part.mkdir()
             with tarfile.open(tmp, "r:bz2") as t:
@@ -51,13 +53,15 @@ def ensure() -> None:
             got = part / config.ASR_MODEL_NAME
             if not got.is_dir():
                 raise OSError("the download did not contain the model")
-            shutil.rmtree(config.ASR_MODEL_DIR, ignore_errors=True)        # a half-finished one from before
+            shutil.rmtree(config.ASR_MODEL_DIR, ignore_errors=True)  # a half-finished one from before
             got.rename(config.ASR_MODEL_DIR)
-            print("  Speech model ready.\n", flush=True)
+            logs.emit("model.download_ready", msg="Speech model ready.")
         except Exception as e:  # noqa: BLE001
             state["error"] = str(e)[-200:]
-            raise RuntimeError("PeakCut couldn't download its speech model (about 480 MB, needed once). Check the "
-                               "internet connection and free disk space, then try again.") from e
+            raise RuntimeError(
+                "RONB Clips couldn't download its speech model (about 480 MB, needed once). Check the "
+                "internet connection and free disk space, then try again."
+            ) from e
         finally:
             state["doing"] = False
             tmp.unlink(missing_ok=True)
@@ -66,7 +70,7 @@ def ensure() -> None:
 
 def main():
     if ready():
-        print("Speech model already present.")
+        logs.emit("model.download_ready", msg="Speech model already present.")
         return
     ensure()
 

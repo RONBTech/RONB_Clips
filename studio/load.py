@@ -3,6 +3,7 @@
 Nothing here counts people. New heavy work (another video, another recording) starts only while the machine has
 room, waits in line for a moment when it is nearly full, and is let through the second it frees up again. That is
 what keeps a rush from slowing everyone down or crashing the server."""
+
 import os
 import shutil
 import threading
@@ -10,12 +11,12 @@ import time
 
 from . import config
 
-BUSY_CPU = float(config.env("PEAKCUT_BUSY_CPU", "82"))          # percent: above this, no extra videos are started
-MIN_FREE_RAM_GB = float(config.env("PEAKCUT_MIN_FREE_RAM_GB", "1.5"))
-MIN_FREE_DISK_GB = float(config.env("PEAKCUT_MIN_FREE_DISK_GB", "3"))
+BUSY_CPU = float(config.env("RONBCLIPS_BUSY_CPU", "82"))  # percent: above this, no extra videos are started
+MIN_FREE_RAM_GB = float(config.env("RONBCLIPS_MIN_FREE_RAM_GB", "1.5"))
+MIN_FREE_DISK_GB = float(config.env("RONBCLIPS_MIN_FREE_DISK_GB", "3"))
 
 _state = {"cpu": 0.0, "ram_free": 99.0, "disk_free": 99.0, "at": 0.0}
-_force = None            # tests only: pretend the server is busy (True) or free (False)
+_force = None  # tests only: pretend the server is busy (True) or free (False)
 _started = False
 _lock = threading.Lock()
 
@@ -25,14 +26,15 @@ def _cpu_times():
     if os.name == "nt":
         import ctypes
         from ctypes import wintypes
+
         idle, kernel, user = wintypes.FILETIME(), wintypes.FILETIME(), wintypes.FILETIME()
         ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user))
-        n = lambda f: (f.dwHighDateTime << 32) | f.dwLowDateTime          # noqa: E731
-        total = n(kernel) + n(user)                                        # kernel time includes idle time
+        n = lambda f: (f.dwHighDateTime << 32) | f.dwLowDateTime  # noqa: E731
+        total = n(kernel) + n(user)  # kernel time includes idle time
         return total - n(idle), total
     with open("/proc/stat", encoding="ascii") as f:
         v = [int(x) for x in f.readline().split()[1:9]]
-    return sum(v) - v[3] - v[4], sum(v)                                    # everything except idle and waiting on disk
+    return sum(v) - v[3] - v[4], sum(v)  # everything except idle and waiting on disk
 
 
 def _ram_free_gb() -> float:
@@ -41,7 +43,9 @@ def _ram_free_gb() -> float:
 
         class M(ctypes.Structure):
             _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong)] + [
-                (n, ctypes.c_ulonglong) for n in ("total", "avail", "tpf", "apf", "tv", "av", "aev")]
+                (n, ctypes.c_ulonglong) for n in ("total", "avail", "tpf", "apf", "tv", "av", "aev")
+            ]
+
         m = M()
         m.dwLength = ctypes.sizeof(M)
         ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
@@ -105,5 +109,10 @@ def disk_full() -> bool:
 
 def state() -> dict:
     start()
-    return {"cpu": round(_state["cpu"]), "ram_free_gb": round(_state["ram_free"], 1), "disk_free_gb": round(_state["disk_free"], 1),
-            "busy": busy(), "busy_cpu": BUSY_CPU}
+    return {
+        "cpu": round(_state["cpu"]),
+        "ram_free_gb": round(_state["ram_free"], 1),
+        "disk_free_gb": round(_state["disk_free"], 1),
+        "busy": busy(),
+        "busy_cpu": BUSY_CPU,
+    }

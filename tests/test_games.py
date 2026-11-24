@@ -2,23 +2,32 @@
 post carries.
 
 Runs against the code directly, with its own empty data folder."""
-import os, sys, tempfile
-os.environ["PEAKCUT_DATA"] = tempfile.mkdtemp(prefix="pc-games-")
+
+import os
+import sys
+import tempfile
+
+os.environ["RONBCLIPS_DATA"] = tempfile.mkdtemp(prefix="pc-games-")
 sys.path.insert(0, ".")
 from studio import brain, games, live
+
 fails = []
+
+
 def check(n, got, want=True):
     ok = want(got) if callable(want) else got == want
-    print(("PASS " if ok else "FAIL ") + n + ("" if ok else f"   got {got!r}")); ok or fails.append(n)
+    print(("PASS " if ok else "FAIL ") + n + ("" if ok else f"   got {got!r}"))
+    ok or fails.append(n)
 
 
 def _session(title, game=""):
     """A live session that is not recording anything: only the game reading is wanted."""
     d = tempfile.mkdtemp(prefix="pc-games-live-")
-    s = live.Session({"title": title, "uploader": "someone", "dir": d, "creator": "", "ai": {},
-                      "source": {"url": "", "name": title}},
-                     {"game": game})
+    s = live.Session(
+        {"title": title, "uploader": "someone", "dir": d, "creator": "", "ai": {}, "source": {"url": "", "name": title}}, {"game": game}
+    )
     return s
+
 
 # ---- the game is read from the title
 check("GTA 6 in a title is GTA VI", games.detect("CLICK THIS STREAM IF YOU WANT GTA 6!")[0], "Grand Theft Auto VI")
@@ -38,14 +47,40 @@ tagged = brain._tidy({"hashtags": []}, 0, 1, game="cyberpunk 2077")["hashtags"]
 check("every tag a post carries is one word", all(t and " " not in t and "#" not in t for t in tagged), True)
 
 # ---- the tags go on every post, whatever the AI wrote
-tidy = brain._tidy({"start": 1, "end": 9, "score": 80, "category": "clutch", "hook": "one vs three",
-                     "title": "He got them all", "description": "three of them", "hashtags": ["Gaming", "FPS"],
-                     "highlight_words": ["three"]}, 1, 9, game="gta 6")
+tidy = brain._tidy(
+    {
+        "start": 1,
+        "end": 9,
+        "score": 80,
+        "category": "clutch",
+        "hook": "one vs three",
+        "title": "He got them all",
+        "description": "three of them",
+        "hashtags": ["Gaming", "FPS"],
+        "highlight_words": ["three"],
+    },
+    1,
+    9,
+    game="gta 6",
+)
 check("the game's tags are added to the post", "GTA6" in tidy["hashtags"], True)
 check("the AI's own tags are kept", "Gaming" in tidy["hashtags"] and "FPS" in tidy["hashtags"], True)
 check("the game's tags are not written twice", tidy["hashtags"].count("GTA6"), 1)
-plain = brain._tidy({"start": 1, "end": 9, "score": 80, "category": "clutch", "hook": "x", "title": "t",
-                     "description": "d", "hashtags": ["Gaming"], "highlight_words": []}, 1, 9)
+plain = brain._tidy(
+    {
+        "start": 1,
+        "end": 9,
+        "score": 80,
+        "category": "clutch",
+        "hook": "x",
+        "title": "t",
+        "description": "d",
+        "hashtags": ["Gaming"],
+        "highlight_words": [],
+    },
+    1,
+    9,
+)
 check("a stream with no game gets no game tags", "GTA6" in plain["hashtags"], False)
 
 # ---- the AI is told which game it is looking at
@@ -55,8 +90,7 @@ check("the tags are named in the extra rules", "GTA6" in rules, True)
 check("a stream with no game gets no extra rules", brain._game_rules(""), "")
 
 # ---- a live session finds its game in the stream's title
-check("a live session finds the game in its title", _session("CLICK THIS STREAM IF YOU WANT GTA 6!")._game(),
-      "Grand Theft Auto VI")
+check("a live session finds the game in its title", _session("CLICK THIS STREAM IF YOU WANT GTA 6!")._game(), "Grand Theft Auto VI")
 check("the creator's own setting wins over the title", _session("just chatting", "gta 6")._game(), "Grand Theft Auto VI")
 check("a live stream with no game in it says so", _session("morning everyone")._game(), "")
 
@@ -73,17 +107,19 @@ check("the people in chat are a copy", s.chat_users[5], {"someone"})
 
 # ---- a slow AI answer must not stop the recording
 import time as _time
+
 s = _session("morning everyone")
-s._ai_check = lambda *a, **k: _time.sleep(2)      # a model that takes its time
+s._ai_check = lambda *a, **k: _time.sleep(2)  # a model that takes its time
 t0 = _time.time()
 s._ask_ai()
 check("asking the AI does not hold up the recording", _time.time() - t0 < 0.5, True)
 t0 = _time.time()
-s._ask_ai()                                       # a second ask while the first is still out
+s._ask_ai()  # a second ask while the first is still out
 check("a second ask does not pile up", _time.time() - t0 < 0.5 and s.ai_busy > 0, True)
 
 # ---- a hand-picked clip is made even when the AI cannot answer
 from unittest.mock import patch
+
 added = []
 s = _session("morning everyone")
 s.words = [{"w": "hello", "s": 0.5, "e": 0.9, "p": 0}]

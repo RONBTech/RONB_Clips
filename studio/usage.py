@@ -2,16 +2,17 @@
 
 Nothing is charged for and nothing is limited here. The AI key belongs to whoever runs this server, and their AI
 service bills them directly; this is only so they (and each user) can see where the tokens went."""
+
 import threading
 import time
 from collections import defaultdict
 
 import sqlalchemy as sa
 
-from . import ai, config, ctx, db
+from . import ai, ctx, db
 
 _where = threading.local()
-_brief: dict = {}    # user -> (when, summary). Dropped the moment they make another AI call.
+_brief: dict = {}  # user -> (when, summary). Dropped the moment they make another AI call.
 
 
 def set_context(creator=None, where=None):
@@ -24,10 +25,17 @@ def record(tokens_in: int, tokens_out: int, purpose: str):
     if not uid:
         return
     with db.engine.begin() as c:
-        c.execute(db.usage.insert().values(user_id=uid, t=time.time(), tokens_in=max(0, int(tokens_in)),
-                                           tokens_out=max(0, int(tokens_out)), purpose=purpose[:60],
-                                           creator=getattr(_where, "creator", None),
-                                           place=(getattr(_where, "where", None) or "")[:200]))
+        c.execute(
+            db.usage.insert().values(
+                user_id=uid,
+                t=time.time(),
+                tokens_in=max(0, int(tokens_in)),
+                tokens_out=max(0, int(tokens_out)),
+                purpose=purpose[:60],
+                creator=getattr(_where, "creator", None),
+                place=(getattr(_where, "where", None) or "")[:200],
+            )
+        )
     _brief.pop(uid, None)
     ctx.bump(uid)
 
@@ -58,24 +66,39 @@ def brief() -> dict:
     midnight = time.mktime(time.localtime(now)[:3] + (0, 0, 0, 0, 0, -1))
     u = db.usage.c
     with db.engine.connect() as c:
-        today = c.execute(sa.select(sa.func.count(), sa.func.coalesce(sa.func.sum(_tokens()), 0)).where(
-            u.user_id == uid, u.t >= midnight)).first()
-    out = {"ready": ai.ready(), "provider": ai.label(), "model": (ai.models() or [""])[0],
-           "today_calls": int(today[0]), "today_tokens": int(today[1]),
-           "problem": ai.problem["text"] if ai.problem["text"] and now - ai.problem["at"] < 6 * 3600 else ""}
+        today = c.execute(
+            sa.select(sa.func.count(), sa.func.coalesce(sa.func.sum(_tokens()), 0)).where(u.user_id == uid, u.t >= midnight)
+        ).first() or (0, 0)
+    out = {
+        "ready": ai.ready(),
+        "provider": ai.label(),
+        "model": (ai.models() or [""])[0],
+        "today_calls": int(today[0]),
+        "today_tokens": int(today[1]),
+        "problem": ai.problem_text(),
+    }
     _brief[uid] = (now, out)
     return dict(out)
 
 
-def summary(creator_names: dict) -> dict:
-    """Everything the AI usage page shows, for the signed-in user."""
+def summary(creator_names: dict, limit: int = 60, offset: int = 0) -> dict:
+    """Everything the AI usage page shows, for the signed-in user. The recent list is paged."""
     uid, now = ctx.uid(), time.time()
     u = db.usage.c
     with db.engine.connect() as c:
-        totals = c.execute(sa.select(sa.func.count(), sa.func.coalesce(sa.func.sum(_tokens()), 0)).where(u.user_id == uid)).first()
-        by_purpose = [[r[0], int(r[1] or 0), r[2]] for r in c.execute(
-            sa.select(u.purpose, sa.func.sum(_tokens()), sa.func.count()).where(u.user_id == uid)
-            .group_by(u.purpose).order_by(sa.func.sum(_tokens()).desc()))]
+        totals = c.execute(sa.select(sa.func.count(), sa.func.coalesce(sa.func.sum(_tokens()), 0)).where(u.user_id == uid)).first() or (
+            0,
+            0,
+        )
+        by_purpose = [
+            [r[0], int(r[1] or 0), r[2]]
+            for r in c.execute(
+                sa.select(u.purpose, sa.func.sum(_tokens()), sa.func.count())
+                .where(u.user_id == uid)
+                .group_by(u.purpose)
+                .order_by(sa.func.sum(_tokens()).desc())
+            )
+        ]
         by_creator = defaultdict(lambda: [0, 0])
         for r in c.execute(sa.select(u.creator, sa.func.sum(_tokens()), sa.func.count()).where(u.user_id == uid).group_by(u.creator)):
             key = creator_names.get(r[0], "No creator") if r[0] else "No creator"
@@ -87,11 +110,22 @@ def summary(creator_names: dict) -> dict:
             if _day(r[0]) in daily:
                 daily[_day(r[0])][0] += int(r[1]) + int(r[2])
                 daily[_day(r[0])][1] += 1
-        recent = [{"t": r._mapping["t"], "tokens": int(r.tokens_in) + int(r.tokens_out), "purpose": r.purpose, "where": r.place,
-                   "creator_name": creator_names.get(r.creator, "") if r.creator else ""}
-                  for r in c.execute(sa.select(db.usage).where(u.user_id == uid).order_by(u.t.desc()).limit(60))]
-    return {**brief(), "calls_total": int(totals[0]), "tokens_total": int(totals[1]),
-            "daily": [{"day": d, "tokens": daily[d][0], "calls": daily[d][1]} for d in days],
-            "by_purpose": by_purpose,
-            "by_creator": sorted(([k, v[0], v[1]] for k, v in by_creator.items()), key=lambda x: -x[1]),
-            "recent": recent}
+        recent = [
+            {
+                "t": r._mapping["t"],
+                "tokens": int(r.tokens_in) + int(r.tokens_out),
+                "purpose": r.purpose,
+                "where": r.place,
+                "creator_name": creator_names.get(r.creator, "") if r.creator else "",
+            }
+            for r in c.execute(sa.select(db.usage).where(u.user_id == uid).order_by(u.t.desc()).limit(limit).offset(offset))
+        ]
+    return {
+        **brief(),
+        "calls_total": int(totals[0]),
+        "tokens_total": int(totals[1]),
+        "daily": [{"day": d, "tokens": daily[d][0], "calls": daily[d][1]} for d in days],
+        "by_purpose": by_purpose,
+        "by_creator": sorted(([k, v[0], v[1]] for k, v in by_creator.items()), key=lambda x: -x[1]),
+        "recent": recent,
+    }

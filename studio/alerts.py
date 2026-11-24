@@ -1,10 +1,10 @@
 """Messages to your phone: Discord webhook and/or Telegram bot, whichever is set up in Settings."""
+
+import os
 import threading
 import time
 
 import httpx
-
-import os
 
 from . import accounts, auth, ctx
 
@@ -27,8 +27,11 @@ def send(text: str) -> list:
             problems.append(f"Discord: {str(e)[:80]}")
     if s["telegram_token"] and s["telegram_chat"]:
         try:
-            r = httpx.post(f"https://api.telegram.org/bot{s['telegram_token']}/sendMessage",
-                           json={"chat_id": s["telegram_chat"], "text": text[:3900]}, timeout=15)
+            r = httpx.post(
+                f"https://api.telegram.org/bot{s['telegram_token']}/sendMessage",
+                json={"chat_id": s["telegram_chat"], "text": text[:3900]},
+                timeout=15,
+            )
             if r.status_code >= 400:
                 problems.append(f"Telegram said {r.status_code}")
         except Exception:  # noqa: BLE001 - never echo the bot token back in an error
@@ -40,13 +43,14 @@ def notify(text: str, kind: str = "live", link: str = ""):
     """Fire and forget, so a slow network never holds up recording or posting. Also shows in the app's bell."""
     try:
         from . import notices
+
         uid = ctx.uid_or_none()
         if uid:
             notices.add(uid, kind, text[:1].upper() + text[1:160], "", link)
     except Exception:  # noqa: BLE001
         pass
     if configured():
-        threading.Thread(target=ctx.bind(send), args=("PeakCut: " + text,), daemon=True).start()
+        threading.Thread(target=ctx.bind(send), args=("RONB Clips: " + text,), daemon=True).start()
 
 
 def digest_loop(make_summary):
@@ -69,6 +73,7 @@ def keep_awake_loop(is_busy):
     if os.name != "nt":
         return  # servers don't go to sleep
     import ctypes
+
     ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
     state = None
     while True:

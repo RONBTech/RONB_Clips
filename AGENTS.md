@@ -1,17 +1,17 @@
-# Working on PeakCut
+# Working on RONB Clips
 
 A short map for contributors and AI coding assistants.
 
-## Installing or updating PeakCut for someone
+## Installing or updating RONB Clips for someone
 
-**Before installing, ask the person where to put it**, and suggest a short, permanent folder: `C:\peakcut` on
-Windows, `~/peakcut` on a Mac or Linux. Do not just clone into the folder you happen to be running in: AI assistants
+**Before installing, ask the person where to put it**, and suggest a short, permanent folder: `C:\ronbclips` on
+Windows, `~/ronbclips` on a Mac or Linux. Do not just clone into the folder you happen to be running in: AI assistants
 often run in a temporary, scratch or session workspace, which gets deleted, and whose path is long enough that
 Windows cannot load the speech library (Windows can't open files whose full path is over 260 characters; the error
 is "DLL load failed ... The filename or extension is too long"). Tell the person where you put it.
 
-**When updating**, look at where PeakCut is first. If its folder path is long (roughly over 100 characters) or inside
-a temporary or assistant workspace, ask the person whether to move it to `C:\peakcut` (or `~/peakcut`) as part of the
+**When updating**, look at where RONB Clips is first. If its folder path is long (roughly over 100 characters) or inside
+a temporary or assistant workspace, ask the person whether to move it to `C:\ronbclips` (or `~/ronbclips`) as part of the
 update. Moving is safe when done like this: clone the latest version into the new folder, copy over `.env`,
 `storage.json` and the `data` folder if there is one (the videos and clips; `storage.json` may point to a data folder
 elsewhere, which then stays where it is), install the requirements, start it from the new folder, check the clips
@@ -19,12 +19,12 @@ are there, and only then offer to delete the old folder. Never delete anything w
 
 ## Run and test
 
-- Run: `python -m studio.server` (settings from `.env`; see `.env.example`). Needs Python 3.10+ and `ffmpeg`.
+- Run: `python -m studio.server` (settings from `.env`; see `.env.example`). Needs Python 3.11+ and `ffmpeg`.
 - The speech model (about 480 MB) downloads by itself on first start; `python -m studio.fetch_model` gets it ahead of time.
 - Tests: `python tests/run.py`. It starts a throwaway copy on a spare port with an empty data folder. Run it
   before and after any change to `studio/`. No keys needed.
 - To try a risky change by hand without touching real data:
-  `PEAKCUT_DATA=<temp folder> PEAKCUT_PORT=8766 python -m studio.server`.
+  `RONBCLIPS_DATA=<temp folder> RONBCLIPS_PORT=8766 python -m studio.server`.
 
 ## Where things are
 
@@ -40,14 +40,20 @@ are there, and only then offer to delete the old folder. Never delete anything w
 | `studio/transcribe.py`, `studio/asr_worker.py` | Speech to text, here or on a second machine |
 | `studio/render.py` | Cutting, layouts and captions (ffmpeg and Pillow) |
 | `studio/media.py` | Downloading (yt-dlp), probing, audio |
-| `studio/auth.py`, `studio/account.py`, `studio/admin.py` | Sign-in, deleting things, the admin dashboard |
+| `studio/auth.py`, `studio/account.py` | Local owner identity and deleting clips/videos/creators |
 | `studio/db.py` | Database tables (SQLAlchemy core; SQLite or PostgreSQL) |
-| `web/index.html` | The whole signed-in app, one file, no build step |
+| `web/index.html`, `web/assets/` | The page shell and its plain JavaScript/CSS modules, no build step |
+| `docs/`, `CONTRIBUTING.md`, `SUPPORT.md` | Architecture, API, upgrade, support and contributor guidance |
+
+## Documentation checks
+
+- Every environment setting read by `studio/` must appear in `.env.example`; run `python scripts/check_env_example.py`.
+- The generated API reference is served at `/api/docs` and `/api/openapi.json`.
+- Schema changes must be added to `studio/migrations.py` and documented in `docs/upgrading.md`; migration 3 removes legacy account/admin tables.
 
 ## Rules worth knowing
 
-- **Sign-in is off by default** (`config.ACCOUNTS`): every request then belongs to one built-in owner
-  (`auth.local_user()`). With `PEAKCUT_ACCOUNTS=1` it is a normal multi-user site. Both paths are tested.
+- **Accounts are off**: every request belongs to one built-in owner (`auth.local_user()`).
 - **Who is asking** always comes from the session (`ctx.uid()`), never from the request body. Background threads
   set it themselves with `ctx.as_user(...)`.
 - **Anything that changes what a user sees must call `ctx.bump()`**. The page polls `/api/sync`, which answers

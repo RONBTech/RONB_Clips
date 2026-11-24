@@ -31,18 +31,18 @@ from pathlib import Path
 
 import numpy as np
 
-W, H = 320, 180            # the picture is looked at small: only the lines matter
-MAX_FRAMES = 24            # frames spread through the video
-MIN_SIZE = 0.12            # the smallest a webcam may be, as a part of the width or height
-MAX_SIZE = 0.60            # and the largest
-ASPECT_MIN = 0.55          # the narrowest: a phone held upright is about 0.56
-ASPECT_MAX = 3.20          # the widest: a banner or a ticker is wider than this
-STILL_FRAC = 0.35          # how much of the game's own movement a webcam picture may have
-STILL_MIN = 6.0            # and the floor, for a game that itself is almost still
-STILL_SHARE = 0.30         # at most this much of a webcam picture may be moving, or the game is showing through
-EDGE_FLUSH = 0.02          # a side this close to the frame's own edge is the edge
-MATCH = 0.35               # how much a box the AI points at must cover a measured box to be that box
-EDGE = 2.2                 # how much brighter than the average line a border must be
+W, H = 320, 180  # the picture is looked at small: only the lines matter
+MAX_FRAMES = 24  # frames spread through the video
+MIN_SIZE = 0.12  # the smallest a webcam may be, as a part of the width or height
+MAX_SIZE = 0.60  # and the largest
+ASPECT_MIN = 0.55  # the narrowest: a phone held upright is about 0.56
+ASPECT_MAX = 3.20  # the widest: a banner or a ticker is wider than this
+STILL_FRAC = 0.35  # how much of the game's own movement a webcam picture may have
+STILL_MIN = 6.0  # and the floor, for a game that itself is almost still
+STILL_SHARE = 0.30  # at most this much of a webcam picture may be moving, or the game is showing through
+EDGE_FLUSH = 0.02  # a side this close to the frame's own edge is the edge
+MATCH = 0.35  # how much a box the AI points at must cover a measured box to be that box
+EDGE = 2.2  # how much brighter than the average line a border must be
 
 
 def _frames(path: str | Path, count: int = MAX_FRAMES) -> np.ndarray:
@@ -51,10 +51,23 @@ def _frames(path: str | Path, count: int = MAX_FRAMES) -> np.ndarray:
         dur = _duration(path)
         rate = max(count / dur, 0.02) if dur > 0 else 0.2
         proc = subprocess.run(
-            ["ffmpeg", "-v", "error", "-i", str(path),
-             "-vf", f"fps={rate:.4f},scale={W}:{H},format=gray",
-             "-frames:v", str(count), "-f", "rawvideo", "-"],
-            capture_output=True, timeout=180)
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-vf",
+                f"fps={rate:.4f},scale={W}:{H},format=gray",
+                "-frames:v",
+                str(count),
+                "-f",
+                "rawvideo",
+                "-",
+            ],
+            capture_output=True,
+            timeout=180,
+        )
     except Exception:  # noqa: BLE001 - no ffmpeg or an unreadable file: no facecam, not a failure
         return np.zeros((0, H, W), dtype=np.uint8)
     raw = proc.stdout or b""
@@ -62,14 +75,17 @@ def _frames(path: str | Path, count: int = MAX_FRAMES) -> np.ndarray:
     n = len(raw) // size
     if n < 4:
         return np.zeros((0, H, W), dtype=np.uint8)
-    return np.frombuffer(raw[:n * size], dtype=np.uint8).reshape(n, H, W)
+    return np.frombuffer(raw[: n * size], dtype=np.uint8).reshape(n, H, W)
 
 
 def _duration(path: str | Path) -> float:
     try:
-        proc = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                               "-of", "default=nw=1:nk=1", str(path)],
-                              capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
         return float((proc.stdout or "").strip() or 0)
     except Exception:  # noqa: BLE001
         return 0.0
@@ -82,8 +98,8 @@ def _profiles(frames: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     if len(frames) < 4:
         return np.zeros(W), np.zeros(H)
     f = frames.astype(np.int16)
-    gx = np.median(np.abs(np.diff(f, axis=2)).sum(axis=1), axis=0)   # change across each column boundary
-    gy = np.median(np.abs(np.diff(f, axis=1)).sum(axis=2), axis=0)   # change across each row boundary
+    gx = np.median(np.abs(np.diff(f, axis=2)).sum(axis=1), axis=0)  # change across each column boundary
+    gy = np.median(np.abs(np.diff(f, axis=1)).sum(axis=2), axis=0)  # change across each row boundary
     return gx, gy
 
 
@@ -100,9 +116,12 @@ def _peaks(profile: np.ndarray, limit: int) -> list[tuple[int, float]]:
 
 
 def _size(path: str | Path) -> tuple[int, int]:
-    proc = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
-                           "-show_entries", "stream=width,height", "-of", "default=nw=1", str(path)],
-                          capture_output=True, text=True, timeout=60)
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "default=nw=1", str(path)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     w = h = 0
     for line in (proc.stdout or "").splitlines():
         if "=" not in line:
@@ -146,11 +165,11 @@ def _plausible(x0, y0, x1, y1, still, light, game, share=STILL_SHARE):
     cut = max(STILL_MIN, STILL_FRAC * game)
     moving = float(np.median(inside))
     if moving > cut:
-        return None                    # it changes with the game: it is the game
+        return None  # it changes with the game: it is the game
     if float((inside > cut).mean()) > share:
-        return None                    # a good part of it moves: the game is showing through
+        return None  # a good part of it moves: the game is showing through
     if float(light[b:d, a:c].mean()) < 0.30 * float(light.mean()):
-        return None                    # a black hole, not a picture
+        return None  # a black hole, not a picture
     return moving
 
 
@@ -166,20 +185,19 @@ def _local(vpeaks, hpeaks, still, light):
     out = []
     for i, x0 in enumerate(xs):
         wx = [vs[v] for v in (x0,) if v in vs]
-        for x1 in xs[i + 1:]:
+        for x1 in xs[i + 1 :]:
             wscore = wx + [vs[v] for v in (x1,) if v in vs]
             for j, y0 in enumerate(ys):
                 hy0 = [hs[v] for v in (y0,) if v in hs]
-                for y1 in ys[j + 1:]:
+                for y1 in ys[j + 1 :]:
                     score = wscore + hy0 + [hs[v] for v in (y1,) if v in hs]
                     if len(score) < 2:
-                        continue       # a box needs two borders of its own, or it is just the frame
+                        continue  # a box needs two borders of its own, or it is just the frame
                     moving = _plausible(x0, y0, x1, y1, still, light, game)
                     if moving is None:
                         continue
                     key = (min(score), (x1 - x0) * (y1 - y0))
-                    out.append({"key": key, "x": x0, "y": y0, "x1": x1, "y1": y1,
-                                "score": round(min(score), 2), "moving": moving})
+                    out.append({"key": key, "x": x0, "y": y0, "x1": x1, "y1": y1, "score": round(min(score), 2), "moving": moving})
     return sorted(out, key=lambda c: c["key"], reverse=True)
 
 
@@ -201,15 +219,34 @@ def _full_frame(path: str | Path) -> np.ndarray | None:
     if not w or not h:
         return None
     try:
-        raw = subprocess.run(
-            ["ffmpeg", "-v", "error", "-ss", f"{max(0.0, _duration(path) / 2.0):.1f}", "-i", str(path),
-             "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
-            capture_output=True, timeout=120).stdout or b""
+        raw = (
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-ss",
+                    f"{max(0.0, _duration(path) / 2.0):.1f}",
+                    "-i",
+                    str(path),
+                    "-frames:v",
+                    "1",
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "gray",
+                    "-",
+                ],
+                capture_output=True,
+                timeout=120,
+            ).stdout
+            or b""
+        )
     except Exception:  # noqa: BLE001
         return None
     if len(raw) < w * h:
         return None
-    return np.frombuffer(raw[:w * h], dtype=np.uint8).reshape(h, w).astype(np.float32)
+    return np.frombuffer(raw[: w * h], dtype=np.uint8).reshape(h, w).astype(np.float32)
 
 
 def _best(profile: np.ndarray, approx: float, span: float) -> float:
@@ -240,8 +277,7 @@ def _snap(path: str | Path, box, w: int, h: int, span: float = 0.0):
         return _best(profile, approx, spread)
 
     x0, y0, x1, y1 = box
-    return (line(col, x0 * fw / W, 0, fw), line(row, y0 * fh / H, 0, fh),
-            line(col, x1 * fw / W, fw, fw), line(row, y1 * fh / H, fh, fh))
+    return (line(col, x0 * fw / W, 0, fw), line(row, y0 * fh / H, 0, fh), line(col, x1 * fw / W, fw, fw), line(row, y1 * fh / H, fh, fh))
 
 
 def _corner(x0, y0, x1, y1, w, h) -> str:
@@ -272,23 +308,54 @@ def _finish(path: str | Path, found: dict, w: int, h: int, still: np.ndarray) ->
     x0, y0, x1, y1 = snapped
     if x1 - x0 < w * MIN_SIZE or y1 - y0 < h * MIN_SIZE:
         return None
-    inside = still[int(found["y"]):int(found["y1"]), int(found["x"]):int(found["x1"])]
+    inside = still[int(found["y"]) : int(found["y1"]), int(found["x"]) : int(found["x1"])]
     game = float(np.median(still))
     moving = float(np.median(inside)) if inside.size else 99.0
     # sure of it when the picture inside hardly moves while the game around it is racing
     conf = "high" if moving <= max(3.0, 0.25 * game) else "low"
-    return {"x": int(round(x0)), "y": int(round(y0)), "w": int(round(x1 - x0)), "h": int(round(y1 - y0)),
-            "corner": _corner(x0, y0, x1, y1, w, h), "score": found.get("score", 0.0), "conf": conf}
+    return {
+        "x": int(round(x0)),
+        "y": int(round(y0)),
+        "w": int(round(x1 - x0)),
+        "h": int(round(y1 - y0)),
+        "corner": _corner(x0, y0, x1, y1, w, h),
+        "score": found.get("score", 0.0),
+        "conf": conf,
+    }
 
 
 def _frame_jpeg(path: str | Path, width: int = 768) -> bytes:
     """One frame of the stream, small, as a JPEG: what a model is shown."""
     try:
-        return subprocess.run(
-            ["ffmpeg", "-v", "error", "-ss", f"{max(0.0, _duration(path) / 2.0):.1f}", "-i", str(path),
-             "-frames:v", "1", "-vf", f"scale={width}:-2", "-pix_fmt", "yuvj420p", "-q:v", "4",
-             "-f", "image2pipe", "-vcodec", "mjpeg", "-"],
-            capture_output=True, timeout=120).stdout or b""
+        return (
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-ss",
+                    f"{max(0.0, _duration(path) / 2.0):.1f}",
+                    "-i",
+                    str(path),
+                    "-frames:v",
+                    "1",
+                    "-vf",
+                    f"scale={width}:-2",
+                    "-pix_fmt",
+                    "yuvj420p",
+                    "-q:v",
+                    "4",
+                    "-f",
+                    "image2pipe",
+                    "-vcodec",
+                    "mjpeg",
+                    "-",
+                ],
+                capture_output=True,
+                timeout=120,
+            ).stdout
+            or b""
+        )
     except Exception:  # noqa: BLE001
         return b""
 
@@ -348,7 +415,7 @@ def detect(path: str | Path, ask=None) -> dict | None:
     if ask is not None:
         looked, hinted = _asked(path, ask)
         if looked and not hinted:
-            return None                    # it looked, and there is no webcam on this stream
+            return None  # it looked, and there is no webcam on this stream
     vx, hy = _profiles(frames)
     vpeaks, hpeaks = _peaks(vx, 40), _peaks(hy, 40)
     found = _local(vpeaks, hpeaks, still, light) if (vpeaks and hpeaks) else []

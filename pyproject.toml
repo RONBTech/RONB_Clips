@@ -1,0 +1,79 @@
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ronb-clips"
+version = "0.1.0"
+description = "Turn long videos into short, captioned clips on your own machine."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "RONB Clips contributors" }]
+keywords = ["video", "clips", "captions", "ffmpeg"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Video",
+]
+dependencies = [
+  "fastapi==0.162.5",
+  "httpx==0.28.1",
+  "numpy==2.2.6",
+  "psycopg==3.3.9",
+  "psycopg-binary==3.3.9",
+  "python-multipart==0.0.32",
+  "sherpa-onnx==2.0.1",
+  "soundfile==0.14.0",
+  "sqlalchemy==2.0.57",
+  "uvicorn==0.54.0",
+  "yt-dlp==2026.10.21",
+  "pillow==13.0.0",
+  "pydantic==2.12.5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff==0.11.13",
+  "pre-commit==4.7.0",
+  "pyright==1.1.400",
+  "bandit==1.9.4",
+  "pip-audit==2.10.1",
+  "coverage==7.17.4",
+  "playwright==1.63.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/RONBTech/RONB_Clips"
+Repository = "https://github.com/RONBTech/RONB_Clips"
+
+[tool.hatch.build.targets.wheel]
+include = ["studio/**", "web/**"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 140
+extend-exclude = ["data", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "B008", "B904", "E402", "E731", "E741", "E702", "UP031", "UP038", "F841"]
+
+[tool.pyright]
+include = ["studio"]
+exclude = ["data", "tests", ".venv"]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+
+[tool.coverage.run]
+branch = true
+source = ["studio"]
+parallel = false
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = true

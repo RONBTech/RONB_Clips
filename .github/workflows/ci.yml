@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d
+        env:
+          POSTGRES_USER: ronbclips
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: ronbclips_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready -U ronbclips
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install system tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5 postgresql-client
+      - name: Install dependencies
+        run: python -m pip install --upgrade "pip==26.3" && python -m pip install -c constraints.txt -r requirements-dev.txt
+      - name: Compile Python
+        run: python -m compileall -q studio tests scripts
+      - name: Check formatting
+        run: ruff format --check studio tests scripts
+      - name: Lint Python
+        run: ruff check studio tests scripts
+      - name: Type-check Python
+        run: pyright
+      - name: Check no-build frontend assets
+        run: python scripts/frontend_checks.py
+      - name: Check environment example drift
+        run: python scripts/check_env_example.py
+      - name: Security audit
+        run: python scripts/security_audit.py --strict
+      - name: Run tests (SQLite, with coverage)
+        run: python tests/run.py
+        env:
+          RONBCLIPS_COVERAGE: "1"
+      - name: Make throwaway backup databases
+        run: |
+          PGPASSWORD=testpassword psql -h 127.0.0.1 -p 5432 -U ronbclips -d ronbclips_test -v ON_ERROR_STOP=1 \
+            -c 'CREATE DATABASE ronbclips_backup_source;' \
+            -c 'CREATE DATABASE ronbclips_backup_target;'
+      - name: Run tests (PostgreSQL)
+        run: python tests/run.py
+        env:
+          RONBCLIPS_TEST_DATABASE_URL: postgresql+psycopg://ronbclips:testpassword@127.0.0.1:5432/ronbclips_test
+          RONBCLIPS_TEST_BACKUP_SOURCE_URL: postgresql+psycopg://ronbclips:testpassword@127.0.0.1:5432/ronbclips_backup_source
+          RONBCLIPS_TEST_BACKUP_TARGET_URL: postgresql+psycopg://ronbclips:testpassword@127.0.0.1:5432/ronbclips_backup_target
+          RONBCLIPS_TEST_PG_ADMIN_URL: postgresql+psycopg://ronbclips:testpassword@127.0.0.1:5432/postgres
+          RONBCLIPS_TEST_PG_BIN: /usr/bin
+          RONBCLIPS_COVERAGE: "0"
+      - name: Real browser test
+        run: |
+          python -m playwright install --with-deps chromium
+          python scripts/e2e_browser.py

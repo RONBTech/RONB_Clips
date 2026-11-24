@@ -1,29 +1,36 @@
 """Talking to the AI service. You bring your own key, and choose the service and model in the dashboard
 (Settings, AI) or in .env. What is saved from the dashboard is kept in ai.json in the data folder and wins.
 
-    PEAKCUT_AI_PROVIDER   gemini | openai | xai | groq | openrouter | anthropic | ollama | custom
-    PEAKCUT_AI_MODELS     one or more model ids, comma separated, tried in this order
-    PEAKCUT_AI_KEY        your key (or PEAKCUT_AI_KEY_FILE, a file holding it)
-    PEAKCUT_AI_BASE_URL   only for "custom" (any service that speaks the OpenAI chat format), or to override
+    RONBCLIPS_AI_PROVIDER   gemini | openai | xai | groq | openrouter | anthropic | ollama | custom
+    RONBCLIPS_AI_MODELS     one or more model ids, comma separated, tried in this order
+    RONBCLIPS_AI_KEY        your key (or RONBCLIPS_AI_KEY_FILE, a file holding it)
+    RONBCLIPS_AI_BASE_URL   only for "custom" (any service that speaks the OpenAI chat format), or to override
 
 Every service is asked for the same thing: JSON that follows a small schema. Gemini takes the schema directly.
 The others are told the schema in the prompt and asked for a JSON object, which works with any chat model.
 
 One picture can also be shown (`see`), which is how the webcam is looked for on a gaming stream. A model that
 cannot look at pictures answers with something else, and that is simply taken as "it did not look"."""
+
 import base64
 import json
-import os
 import re
 import threading
+import time
 
 import httpx
 
-from . import config
+from . import config, ctx, secretfile
 
 # name -> (label shown on the pages, address, how it is spoken to, where to get a key, an example model id)
 PROVIDERS = {
-    "gemini": ("Gemini", "https://generativelanguage.googleapis.com/v1beta/models", "gemini", "https://aistudio.google.com/apikey", "gemini-2.5-flash"),
+    "gemini": (
+        "Gemini",
+        "https://generativelanguage.googleapis.com/v1beta/models",
+        "gemini",
+        "https://aistudio.google.com/apikey",
+        "gemini-2.5-flash",
+    ),
     "openai": ("OpenAI", "https://api.openai.com/v1", "openai", "https://platform.openai.com/api-keys", "gpt-4o-mini"),
     "xai": ("Grok", "https://api.x.ai/v1", "openai", "https://console.x.ai", "grok-4"),
     "groq": ("Groq", "https://api.groq.com/openai/v1", "openai", "https://console.groq.com/keys", "llama-3.3-70b-versatile"),
@@ -33,7 +40,7 @@ PROVIDERS = {
     "custom": ("Custom (OpenAI-compatible)", "", "openai", "", ""),
 }
 ALIASES = {"google": "gemini", "grok": "xai", "claude": "anthropic", "local": "ollama"}
-NO_KEY = {"ollama", "custom"}       # a model running on your own machine needs no key
+NO_KEY = {"ollama", "custom"}  # a model running on your own machine needs no key
 
 # ---------------------------------------------------------------- the settings in use
 _lock = threading.Lock()
@@ -64,10 +71,12 @@ def current() -> dict:
     """Provider, models, address and key: what the dashboard saved, or else what .env says."""
     d = _from_dashboard()
     p = str(d.get("provider") or config.AI_PROVIDER or "").strip().lower()
-    return {"provider": ALIASES.get(p, p),
-            "models": list(d["models"]) if d.get("provider") else list(config.AI_MODELS),
-            "base_url": (str(d.get("base_url") or "") if d.get("provider") else config.AI_BASE_URL).rstrip("/"),
-            "key": str(d["key"]) if d.get("provider") and "key" in d else config.ai_key()}
+    return {
+        "provider": ALIASES.get(p, p),
+        "models": list(d["models"]) if d.get("provider") else list(config.AI_MODELS),
+        "base_url": (str(d.get("base_url") or "") if d.get("provider") else config.AI_BASE_URL).rstrip("/"),
+        "key": str(d["key"]) if d.get("provider") and "key" in d else config.ai_key(),
+    }
 
 
 def provider() -> str:
@@ -100,11 +109,20 @@ def public() -> dict:
     """What the settings page may see. The key itself never leaves the server: only whether there is one, and
     its last four characters so the owner can tell which key it is."""
     c = current()
-    return {"provider": c["provider"], "models": c["models"], "base_url": c["base_url"], "has_key": bool(c["key"]),
-            "key_hint": c["key"][-4:] if len(c["key"]) >= 12 else "", "ready": ready(), "label": label(),
-            "saved_here": bool(_from_dashboard().get("provider")),
-            "providers": [{"id": k, "label": v[0], "address": v[1], "needs_key": k not in NO_KEY, "key_url": v[3], "example": v[4]}
-                          for k, v in PROVIDERS.items()]}
+    return {
+        "provider": c["provider"],
+        "models": c["models"],
+        "base_url": c["base_url"],
+        "has_key": bool(c["key"]),
+        "key_hint": c["key"][-4:] if len(c["key"]) >= 12 else "",
+        "ready": ready(),
+        "label": label(),
+        "saved_here": bool(_from_dashboard().get("provider")),
+        "providers": [
+            {"id": k, "label": v[0], "address": v[1], "needs_key": k not in NO_KEY, "key_url": v[3], "example": v[4]}
+            for k, v in PROVIDERS.items()
+        ],
+    }
 
 
 def save(provider_id: str, model_ids, address: str = "", new_key=None) -> dict:
@@ -131,13 +149,7 @@ def save(provider_id: str, model_ids, address: str = "", new_key=None) -> dict:
         raise ValueError("Paste the key for this service.")
     with _lock:
         f = _file()
-        tmp = f.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"provider": p, "models": ms, "base_url": address, "key": k}), encoding="utf-8")
-        try:
-            os.chmod(tmp, 0o600)        # the key is only for whoever runs the server
-        except OSError:
-            pass
-        tmp.replace(f)
+        secretfile.write_private(f, json.dumps({"provider": p, "models": ms, "base_url": address, "key": k}).encode("utf-8"))
         _saved["at"] = None
     return public()
 
@@ -163,8 +175,11 @@ def list_models(provider_id=None, address=None, with_key=None) -> list:
         raise AIError(f"HTTP {r.status_code} {r.text[:200].replace(k or chr(0), '<key>')}")
     data = r.json()
     if how == "gemini":
-        found = [m.get("name", "").split("/")[-1] for m in data.get("models", [])
-                 if "generateContent" in (m.get("supportedGenerationMethods") or [])]
+        found = [
+            m.get("name", "").split("/")[-1]
+            for m in data.get("models", [])
+            if "generateContent" in (m.get("supportedGenerationMethods") or [])
+        ]
     else:
         found = [m.get("id", "") for m in data.get("data", []) if isinstance(m, dict)]
     return sorted({m for m in found if m})[:400]
@@ -174,16 +189,23 @@ def test() -> dict:
     """One tiny request with the settings in use, to prove the key, the address and the model all work."""
     ms = models()
     if not ready():
-        raise ValueError("Save a service, a model and a key first.")
-    out, sent, wrote = call(ms[0], 'Answer with a JSON array that holds the single string "ok".', {"type": "ARRAY", "items": {"type": "STRING"}})
+        raise ValueError("Save a service and model first. Ollama and custom/local services do not need an API key.")
+    out, sent, wrote = call(
+        ms[0], 'Answer with a JSON array that holds the single string "ok".', {"type": "ARRAY", "items": {"type": "STRING"}}
+    )
     return {"ok": True, "model": ms[0], "tokens": sent + wrote, "answer": str(out)[:80]}
 
 
 class AIError(RuntimeError):
-    pass
+    """A failed AI call, including any retry delay or whole-day limit reported by the service."""
+
+    def __init__(self, message, wait=None, daily=False):
+        super().__init__(message)
+        self.wait = wait
+        self.daily = daily
 
 
-problem = {"text": "", "at": 0.0}       # why the AI last failed, for the dashboard; cleared when it answers again
+problems: dict = {}  # per user: why the AI last failed, for the dashboard; cleared when it answers again
 
 
 def explain(e) -> str:
@@ -191,30 +213,67 @@ def explain(e) -> str:
     text, low = str(e), str(e).lower()
     name = (models() or ["?"])[0]
     if "404" in text or "not found" in low or "does not exist" in low or "unknown model" in low or "not_found" in low:
-        return f"{label()} doesn't know the model \"{name}\". Open Settings, AI, press Find models and pick one from the list."
+        return f'{label()} doesn\'t know the model "{name}". Open Settings, AI, press Find models and pick one from the list.'
     if "401" in text or "403" in text or "api key" in low or "api_key" in low or "unauthorized" in low or "permission" in low:
         return f"{label()} refused the key. Paste a working key under Settings, AI."
     if "429" in text or "quota" in low or "rate limit" in low or "exhausted" in low:
         return f"{label()} says the key has hit its limit or has no credit left. Check the account with {label()}, or try again later."
-    if "connect" in low or "timed out" in low or "timeout" in low or "getaddrinfo" in low or "refused" in low or "nodename" in low or "servname" in low or "nameresolutionerror" in low or "name resolution" in low:
-        return f"PeakCut couldn't reach {label()}. Check the internet connection" + (" and that Ollama is running." if provider() == "ollama" else ".")
+    if (
+        "connect" in low
+        or "timed out" in low
+        or "timeout" in low
+        or "getaddrinfo" in low
+        or "refused" in low
+        or "nodename" in low
+        or "servname" in low
+        or "nameresolutionerror" in low
+        or "name resolution" in low
+    ):
+        return f"RONB Clips couldn't reach {label()}. Check the internet connection" + (
+            " and that Ollama is running." if provider() == "ollama" else "."
+        )
     return ""
 
 
 def note_problem(e):
-    import time
     why = explain(e)
     if why:
-        problem.update(text=why, at=time.time())
+        problems[ctx.uid_or_none() or ""] = {"text": why, "at": time.time()}
 
 
 def clear_problem():
-    problem.update(text="", at=0.0)
+    problems.pop(ctx.uid_or_none() or "", None)
+
+
+def problem_text() -> str:
+    """The last AI failure for the person asking, in plain words, for six hours."""
+    p = problems.get(ctx.uid_or_none() or "")
+    return p["text"] if p and time.time() - p["at"] < 6 * 3600 else ""
+
+
+def asked_wait(r) -> float | None:
+    """Read Retry-After or Gemini's retryDelay, without inventing a delay."""
+    try:
+        value = r.headers.get("retry-after") or r.headers.get("Retry-After")
+        if value:
+            return max(0.0, float(value))
+    except (ValueError, AttributeError):
+        pass
+    try:
+        m = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', r.text or "")
+        return float(m.group(1)) if m else None
+    except (ValueError, AttributeError):
+        return None
 
 
 def _fail(r, model):
     text = r.text[:300].replace(key() or "\0", "<key>")
-    raise AIError(f"HTTP {r.status_code} {text}")
+    limited = r.status_code in (429, 503)
+    raise AIError(
+        f"HTTP {r.status_code} {text}",
+        wait=asked_wait(r) if limited else None,
+        daily=limited and bool(re.search(r"PerDay|per day|daily", r.text or "", re.I)),
+    )
 
 
 # ---------------------------------------------------------------- the schema, said in words for chat models
@@ -228,8 +287,10 @@ def _json_schema(s):
 
 
 def _wrapped(prompt, schema):
-    return (prompt + "\n\nAnswer with JSON only, no other text and no code fences: one object with a single key "
-            "\"items\", whose value follows this JSON Schema:\n" + json.dumps(_json_schema(schema)))
+    return (
+        prompt + "\n\nAnswer with JSON only, no other text and no code fences: one object with a single key "
+        '"items", whose value follows this JSON Schema:\n' + json.dumps(_json_schema(schema))
+    )
 
 
 def _json_chunks(text: str):
@@ -253,7 +314,7 @@ def _json_chunks(text: str):
         elif ch in "}]":
             depth -= 1
             if depth == 0 and start is not None:
-                out.append(text[start:i + 1])
+                out.append(text[start : i + 1])
                 start = None
             elif depth < 0:
                 depth = 0
@@ -286,8 +347,10 @@ def _parse(text):
                 out = json.loads(m.group(0))
             except ValueError:
                 raise AIError("The AI did not answer with JSON.")
-    if isinstance(out, dict) and "items" in out:
-        out = out["items"]
+    if isinstance(out, dict):
+        out = out["items"] if "items" in out else [out]  # one object instead of a list: still one answer
+    if not isinstance(out, list):
+        raise AIError("The AI answered with JSON, but not the list of items it was asked for.")
     return out
 
 
@@ -313,11 +376,8 @@ def see(prompt: str, image: bytes, timeout: float | None = None) -> tuple[str, i
     b64 = base64.b64encode(image).decode()
     how = PROVIDERS[provider()][2]
     if how == "gemini":
-        body = {"contents": [{"role": "user", "parts": [
-            {"text": prompt},
-            {"inline_data": {"mimeType": "image/jpeg", "data": b64}}]}]}
-        r = httpx.post(f"{base_url()}/{model}:generateContent", json=body,
-                       headers={"x-goog-api-key": key()}, timeout=timeout or 120)
+        body = {"contents": [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mimeType": "image/jpeg", "data": b64}}]}]}
+        r = httpx.post(f"{base_url()}/{model}:generateContent", json=body, headers={"x-goog-api-key": key()}, timeout=timeout or 120)
         if r.status_code != 200:
             _fail(r, model)
         data = r.json()
@@ -326,11 +386,22 @@ def see(prompt: str, image: bytes, timeout: float | None = None) -> tuple[str, i
         sent = int(u.get("promptTokenCount") or 0)
         return text, sent, max(0, int(u.get("totalTokenCount") or 0) - sent)
     if how == "anthropic":
-        body = {"model": model, "max_tokens": 300, "messages": [{"role": "user", "content": [
-            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
-            {"type": "text", "text": prompt}]}]}
-        r = httpx.post(f"{base_url()}/messages", json=body, timeout=timeout or 120,
-                       headers={"x-api-key": key(), "anthropic-version": "2023-06-01"})
+        body = {
+            "model": model,
+            "max_tokens": 300,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+        }
+        r = httpx.post(
+            f"{base_url()}/messages", json=body, timeout=timeout or 120, headers={"x-api-key": key(), "anthropic-version": "2023-06-01"}
+        )
         if r.status_code != 200:
             _fail(r, model)
         data = r.json()
@@ -338,29 +409,41 @@ def see(prompt: str, image: bytes, timeout: float | None = None) -> tuple[str, i
         u = data.get("usage") or {}
         return text, int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0)
     headers = {"Authorization": f"Bearer {key()}"} if key() else {}
-    body = {"model": model, "stream": False, "messages": [{"role": "user", "content": [
-        {"type": "text", "text": prompt},
-        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}}]}]}
+    body = {
+        "model": model,
+        "stream": False,
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}}],
+            }
+        ],
+    }
     r = httpx.post(f"{base_url()}/chat/completions", json=body, headers=headers, timeout=timeout or 120)
     if r.status_code != 200:
         _fail(r, model)
     data = _openai_body(r)
-    text = (data["choices"][0]["message"].get("content") or "")
+    text = data["choices"][0]["message"].get("content") or ""
     u = data.get("usage") or {}
     return text, int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
 
 
 def _gemini(model, prompt, schema, timeout=None):
-    body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json", "responseSchema": schema}}
+    body = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.4, "maxOutputTokens": 4096, "responseMimeType": "application/json", "responseSchema": schema},
+    }
     r = httpx.post(f"{base_url()}/{model}:generateContent", json=body, headers={"x-goog-api-key": key()}, timeout=timeout or 120)
     if r.status_code != 200:
         _fail(r, model)
     data = r.json()
-    text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"])
+    cand = (data.get("candidates") or [{}])[0]
+    if cand.get("finishReason") in ("MAX_TOKENS", "RECITATION"):
+        raise AIError(f"The AI stopped mid-answer ({cand.get('finishReason')}).")
+    text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts") or [])
     u = data.get("usageMetadata", {})
     sent = int(u.get("promptTokenCount") or 0)
-    return json.loads(text), sent, max(0, int(u.get("totalTokenCount") or 0) - sent)   # the answer, and any thinking billed with it
+    return _parse(text), sent, max(0, int(u.get("totalTokenCount") or 0) - sent)  # the answer, and any thinking billed with it
 
 
 def _openai_body(r):
@@ -417,27 +500,41 @@ def _from_events(text: str) -> dict:
 def _openai(model, prompt, schema, timeout=None):
     headers = {"Authorization": f"Bearer {key()}"} if key() else {}
     body = {"model": model, "messages": [{"role": "user", "content": _wrapped(prompt, schema)}], "stream": False}
-    # Most services accept these two extras; a few models refuse one of them, so they are dropped on a refusal.
-    extras = [{"temperature": 0.4, "response_format": {"type": "json_object"}}, {"response_format": {"type": "json_object"}}, {}]
+    # Most services accept these extras; a few models refuse one of them, so they are dropped on a refusal. The
+    # token cap keeps one answer from eating a whole minute of a small key's budget, and stops a runaway answer.
+    extras = [
+        {"temperature": 0.4, "max_tokens": 2048, "response_format": {"type": "json_object"}},
+        {"max_tokens": 2048, "response_format": {"type": "json_object"}},
+        {"response_format": {"type": "json_object"}},
+        {},
+    ]
     r = None
     for extra in extras:
         r = httpx.post(f"{base_url()}/chat/completions", json={**body, **extra}, headers=headers, timeout=timeout or 180)
         if r.status_code not in (400, 422):
             break
+    if r is None:
+        raise RuntimeError("No AI request was made.")
     if r.status_code != 200:
         _fail(r, model)
     data = _openai_body(r)
+    choice = (data.get("choices") or [{}])[0]
+    if choice.get("finish_reason") == "length":
+        raise AIError("The AI stopped mid-answer: it hit the length limit.")
     u = data.get("usage") or {}
-    return _parse(data["choices"][0]["message"].get("content")), int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
+    return _parse(choice.get("message", {}).get("content")), int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
 
 
 def _anthropic(model, prompt, schema, timeout=None):
     body = {"model": model, "max_tokens": 8192, "messages": [{"role": "user", "content": _wrapped(prompt, schema)}]}
-    r = httpx.post(f"{base_url()}/messages", json=body, timeout=timeout or 180,
-                   headers={"x-api-key": key(), "anthropic-version": "2023-06-01"})
+    r = httpx.post(
+        f"{base_url()}/messages", json=body, timeout=timeout or 180, headers={"x-api-key": key(), "anthropic-version": "2023-06-01"}
+    )
     if r.status_code != 200:
         _fail(r, model)
     data = r.json()
+    if data.get("stop_reason") == "max_tokens":
+        raise AIError("The AI stopped mid-answer: it hit the length limit.")
     text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
     u = data.get("usage") or {}
     return _parse(text), int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0)

@@ -19,10 +19,16 @@ import re
 
 # name, words that mean it, tags to put on the post
 GAMES: list[tuple[str, list[str], list[str]]] = [
-    ("Grand Theft Auto VI", ["grand theft auto vi", "grand theft auto 6", "gta vi", "gta 6", "gta6"],
-     ["GTA6", "GTA6Game", "ViceCity", "RockstarGames", "GTA6Launch"]),
-    ("Grand Theft Auto V", ["grand theft auto v", "grand theft auto 5", "gta online", "gta v", "gta 5", "gta5", "gtav"],
-     ["GTA5", "GTAOnline", "RockstarGames", "GTA5RP"]),
+    (
+        "Grand Theft Auto VI",
+        ["grand theft auto vi", "grand theft auto 6", "gta vi", "gta 6", "gta6"],
+        ["GTA6", "GTA6Game", "ViceCity", "RockstarGames", "GTA6Launch"],
+    ),
+    (
+        "Grand Theft Auto V",
+        ["grand theft auto v", "grand theft auto 5", "gta online", "gta v", "gta 5", "gta5", "gtav"],
+        ["GTA5", "GTAOnline", "RockstarGames", "GTA5RP"],
+    ),
     ("Grand Theft Auto IV", ["grand theft auto iv", "gta 4", "gta4"], ["GTA4", "RockstarGames"]),
     ("Fortnite", ["fortnite"], ["Fortnite", "FortniteOG", "BattleRoyale"]),
     ("Minecraft", ["minecraft"], ["Minecraft", "MinecraftGame"]),

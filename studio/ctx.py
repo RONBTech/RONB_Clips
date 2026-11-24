@@ -4,11 +4,18 @@ Web requests get it from the session cookie (set by the middleware in server.py)
 request, so they set it themselves from the job, recording or post they are working on. Every module that
 touches user data asks here, which is what keeps one user's creators, clips and accounts away from
 another's."""
+
 import collections
 import contextlib
 import contextvars
 
-_uid = contextvars.ContextVar("peakcut_uid", default=None)
+_uid: contextvars.ContextVar[str | None] = contextvars.ContextVar("ronbclips_uid", default=None)
+# The visitor's address, taken from the socket or (only when a trusted proxy is configured) a header. Used to keep
+# rate limits per visitor instead of putting everyone in the same local-owner bucket.
+_ip: contextvars.ContextVar[str] = contextvars.ContextVar("ronbclips_ip", default="")
+# The id of the web request that started this work, or a made-up id for background work. It is carried into worker
+# threads by bind() so their log lines can be followed back to the request (or job) that produced them.
+_request_id: contextvars.ContextVar[str] = contextvars.ContextVar("ronbclips_request_id", default="")
 
 
 class NoUser(RuntimeError):
@@ -26,30 +33,61 @@ def uid_or_none():
     return _uid.get()
 
 
-def set_uid(u):
+def ip() -> str:
+    """The address of the caller in this request, or '' for background work."""
+    return _ip.get() or ""
+
+
+def request_id() -> str:
+    """The id to put in structured log lines for this request or worker."""
+    return _request_id.get() or ""
+
+
+def set_uid(u, request_id="", ip=""):
     """For a thread that works for one user for its whole life."""
     _uid.set(u)
+    if request_id:
+        _request_id.set(request_id)
+    if ip:
+        _ip.set(ip)
 
 
 @contextlib.contextmanager
-def as_user(u):
-    token = _uid.set(u)
+def as_user(u, request_id="", ip=""):
+    uid_token = _uid.set(u)
+    request_token = _request_id.set(request_id) if request_id else None
+    ip_token = _ip.set(ip) if ip else None
     try:
         yield
     finally:
-        _uid.reset(token)
+        if ip_token is not None:
+            _ip.reset(ip_token)
+        if request_token is not None:
+            _request_id.reset(request_token)
+        _uid.reset(uid_token)
+
+
+@contextlib.contextmanager
+def as_context(uid=None, request_id="", ip=""):
+    """Set the whole identity at once, including the log correlation id."""
+    with as_user(uid, request_id=request_id, ip=ip):
+        yield
 
 
 def bind(fn):
-    """Wrap fn so it runs as the current user, even on another thread (threads do not inherit this)."""
-    u = _uid.get()
+    """Wrap fn so it runs with the current user and log id, even on another thread (threads do not inherit these)."""
+    u, rid, visitor = _uid.get(), _request_id.get(), _ip.get()
 
     def run(*a, **k):
-        token = _uid.set(u)
+        uid_token = _uid.set(u)
+        request_token = _request_id.set(rid)
+        ip_token = _ip.set(visitor)
         try:
             return fn(*a, **k)
         finally:
-            _uid.reset(token)
+            _ip.reset(ip_token)
+            _request_id.reset(request_token)
+            _uid.reset(uid_token)
 
     return run
 

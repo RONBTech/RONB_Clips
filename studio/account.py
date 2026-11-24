@@ -2,12 +2,13 @@
 
 Nothing here can be undone, so every caller asks the person first. Work in progress is never pulled out from under
 itself: a video still being made, or a stream still being recorded, has to finish or be stopped first."""
+
 import shutil
 import time
 import zipfile
 from pathlib import Path
 
-from . import auth, config, creators, ctx, db, jobs, live, usage
+from . import config, creators, ctx, jobs, live
 
 
 class Busy(Exception):
@@ -35,17 +36,17 @@ def delete_clip(jid: str, cid: str) -> bool:
     for name in (clip.get("file"), clip.get("cover")):
         if name:
             (d / "clips" / Path(str(name)).name).unlink(missing_ok=True)
-    for stem in {cid, Path(str(clip.get("file") or cid)).stem}:     # the captions and the notes kept beside the clip
+    for stem in {cid, Path(str(clip.get("file") or cid)).stem}:  # the captions and the notes kept beside the clip
         for ext in ("ass", "json"):
             (d / "clips" / f"{stem}.{ext}").unlink(missing_ok=True)
     src = clip.get("src")
-    if src:                                        # the piece of video fetched or recorded just for this clip
+    if src:  # the piece of video fetched or recorded just for this clip
         p = Path(src)
         try:
             mine = p.resolve().parent in ((d / "clips").resolve(), d.resolve()) and p.name.startswith(f"{cid}.src")
         except OSError:
             mine = False
-        if mine:                                   # never the whole video's own file
+        if mine:  # never the whole video's own file
             p.unlink(missing_ok=True)
     ctx.bump()
     return True
@@ -82,15 +83,18 @@ def zip_clips(clip_ids: list, limit_gb: float = 4.0) -> Path:
     for jid, cid in dict.fromkeys(clip_ids):
         job = jobs.get(jid)
         clip = next((c for c in (job or {}).get("clips", []) if c["id"] == cid and c.get("status") == "done"), None)
-        if not clip or not clip.get("file"):
+        file = clip.get("file") if clip else None
+        if not job or not clip or not file:
             continue
-        f = Path(job["dir"]) / "clips" / Path(str(clip["file"])).name
+        f = Path(job["dir"]) / "clips" / Path(file).name
         if not f.is_file():
             continue
         total += f.stat().st_size
         if total > limit_gb * 1e9:
             raise ValueError(f"That is more than {limit_gb:g} GB of clips. Download them in smaller groups.")
-        base = "".join(ch if ch.isalnum() or ch in " -_" else "" for ch in (clip.get("title") or clip.get("hook") or cid))[:60].strip() or cid
+        base = (
+            "".join(ch if ch.isalnum() or ch in " -_" else "" for ch in (clip.get("title") or clip.get("hook") or cid))[:60].strip() or cid
+        )
         name, n = f"{base}.mp4", 2
         while name.lower() in seen:
             name, n = f"{base} ({n}).mp4", n + 1
@@ -100,7 +104,7 @@ def zip_clips(clip_ids: list, limit_gb: float = 4.0) -> Path:
         raise ValueError("None of those clips are ready to download.")
     tmp = config.user_dir(ctx.uid()) / "tmp"
     tmp.mkdir(parents=True, exist_ok=True)
-    for old in tmp.glob("clips-*.zip"):                       # leftovers from downloads that were abandoned
+    for old in tmp.glob("clips-*.zip"):  # leftovers from downloads that were abandoned
         if time.time() - old.stat().st_mtime > 3600:
             old.unlink(missing_ok=True)
     out = tmp / f"clips-{int(time.time() * 1000)}.zip"
@@ -128,40 +132,3 @@ def delete_creator(cid: str) -> dict:
     shutil.rmtree(creators.root(cid), ignore_errors=True)
     ctx.bump()
     return {"ok": True, "videos": len(mine)}
-
-
-# ---------------------------------------------------------------- the whole account
-def delete_account(uid: str) -> dict:
-    """Remove an account and everything it owns: recordings, videos, clips, creators, connected accounts and
-    history. Sign-in is removed too."""
-    u = auth.get_user(uid)
-    if not u:
-        return {"ok": False}
-    if u.is_admin:
-        raise Busy("Admin accounts can't be deleted. Make it a normal account first.")
-    with ctx.as_user(uid):
-        for s in list(live.SESSIONS.values()):
-            if s.job.get("user") == uid and not s.finished:
-                raise Busy("A stream is still being recorded. Stop the recording first.")
-        mine = jobs.list_jobs()
-        if any(_busy(j) for j in mine):
-            raise Busy("A video is still being made. Wait for it to finish, then delete the account.")
-        for j in mine:
-            jobs.delete(j["id"])
-    with db.engine.begin() as c:
-        for t in reversed(db.meta.sorted_tables):
-            if t.name != "users" and "user_id" in t.c:
-                c.execute(t.delete().where(t.c.user_id == uid))
-        c.execute(db.users.delete().where(db.users.c.id == uid))
-    auth.forget(uid)
-    creators._mem.pop(uid, None)
-    try:
-        from . import accounts
-        accounts._settings_mem.pop(uid, None)
-    except Exception:  # noqa: BLE001
-        pass
-    from . import posting
-    posting.forget(uid)                            # scheduled posts must not outlive the account that owns them
-    usage.forget(uid)
-    shutil.rmtree(config.user_dir(uid), ignore_errors=True)
-    return {"ok": True}

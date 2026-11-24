@@ -1,14 +1,15 @@
-"""Is there a newer PeakCut? Compares the version running here with the latest on GitHub, once a minute.
+"""Is there a newer RONB Clips? Compares the version running here with the latest on GitHub, once a minute.
 
-The version here is the git commit this folder was on when PeakCut started (read straight from .git, no git
-program needed). Each minute, in the background, PeakCut asks GitHub which commit the project is on now: one small
+The version here is the git commit this folder was on when RONB Clips started (read straight from .git, no git
+program needed). Each minute, in the background, RONB Clips asks GitHub which commit the project is on now: one small
 request to the same address `git` itself uses, which has no hourly allowance to run out of. Only when that commit
 changes does it ask GitHub's API what was added, to show the list. Nothing about this computer or its users is
 sent. The owner sees a notice in the dashboard within a minute or two, with no restart.
 
-    PEAKCUT_UPDATE_REPO     where to look (default: the project's own repository; a fork points at itself)
-    PEAKCUT_UPDATE_BRANCH   which branch (default: main)
-    PEAKCUT_UPDATE_CHECK=0  never look"""
+    RONBCLIPS_UPDATE_REPO     where to look (default: the project's own repository; a fork points at itself)
+    RONBCLIPS_UPDATE_BRANCH   which branch (default: main)
+    RONBCLIPS_UPDATE_CHECK=0  never look"""
+
 import re
 import threading
 import time
@@ -17,11 +18,11 @@ import httpx
 
 from . import config
 
-REPO = (config.env("PEAKCUT_UPDATE_REPO") or "haziqahmedqasmi/peakcut").strip().strip("/")
-BRANCH = (config.env("PEAKCUT_UPDATE_BRANCH") or "main").strip()
-ON = config.env("PEAKCUT_UPDATE_CHECK", "1") != "0" and bool(re.fullmatch(r"[\w.\-]+/[\w.\-]+", REPO))
+REPO = (config.env("RONBCLIPS_UPDATE_REPO") or "RONBTech/RONB_Clips").strip().strip("/")
+BRANCH = (config.env("RONBCLIPS_UPDATE_BRANCH") or "main").strip()
+ON = config.env("RONBCLIPS_UPDATE_CHECK", "1") != "0" and bool(re.fullmatch(r"[\w.\-]+/[\w.\-]+", REPO))
 EVERY = 60
-UA = {"User-Agent": "PeakCut-update-check"}
+UA = {"User-Agent": "RONBTech-update-check"}
 _state = {"checked": 0.0, "result": None, "seen": "", "notes": None}
 _lock = threading.Lock()
 _started = False
@@ -31,7 +32,7 @@ def current() -> str:
     """The commit this folder is on now, or "" when it was not installed with git (a downloaded zip, for example)."""
     g = config.ROOT / ".git"
     try:
-        if g.is_file():                      # a worktree or submodule: .git points somewhere else
+        if g.is_file():  # a worktree or submodule: .git points somewhere else
             g = (config.ROOT / g.read_text(encoding="utf-8").split(":", 1)[1].strip()).resolve()
         head = (g / "HEAD").read_text(encoding="utf-8").strip()
         if not head.startswith("ref:"):
@@ -51,30 +52,38 @@ def current() -> str:
     return ""
 
 
-RUNNING = current()       # the code in memory: what PeakCut is actually running until it is restarted
+RUNNING = current()  # the code in memory: what RONB Clips is actually running until it is restarted
 
 
 def newest() -> str:
     """The commit the project is on right now, from the address git itself asks. "" if it cannot be told."""
     r = httpx.get(f"https://github.com/{REPO}.git/info/refs", params={"service": "git-upload-pack"}, headers=UA, timeout=15)
     if r.status_code != 200:
-        return ""                            # a private repository, or GitHub is having a moment
+        return ""  # a private repository, or GitHub is having a moment
     m = re.search(rb"([0-9a-f]{40}) refs/heads/" + re.escape(BRANCH).encode() + rb"[\x00\n]", r.content)
     return m.group(1).decode() if m else ""
 
 
 def _what_changed(here: str):
     """(how many commits newer, their first lines, newest first), or None if GitHub's API will not say right now."""
-    r = httpx.get(f"https://api.github.com/repos/{REPO}/compare/{here}...{BRANCH}", timeout=20,
-                  headers={"Accept": "application/vnd.github+json", **UA})
+    r = httpx.get(
+        f"https://api.github.com/repos/{REPO}/compare/{here}...{BRANCH}",
+        timeout=20,
+        headers={"Accept": "application/vnd.github+json", **UA},
+    )
     if r.status_code != 200:
         return None
     d = r.json()
     notes = []
     for c in reversed(d.get("commits") or []):
         msg = str((c.get("commit") or {}).get("message") or "").strip().splitlines()
-        notes.append({"sha": str(c.get("sha") or "")[:7], "title": (msg[0] if msg else "")[:140],
-                      "date": str(((c.get("commit") or {}).get("committer") or {}).get("date") or "")[:10]})
+        notes.append(
+            {
+                "sha": str(c.get("sha") or "")[:7],
+                "title": (msg[0] if msg else "")[:140],
+                "date": str(((c.get("commit") or {}).get("committer") or {}).get("date") or "")[:10],
+            }
+        )
     return int(d.get("ahead_by") or 0), notes[:20]
 
 
@@ -95,7 +104,7 @@ def check(force: bool = False):
         if not top or top == here:
             _state.update(result=None, seen=top)
             return None
-        if top != _state["seen"] or _state["notes"] is None:      # a commit not seen before: ask what it brought, once
+        if top != _state["seen"] or _state["notes"] is None:  # a commit not seen before: ask what it brought, once
             _state["seen"] = top
             try:
                 _state["notes"] = _what_changed(here)
@@ -103,12 +112,17 @@ def check(force: bool = False):
                 _state["notes"] = None
         got = _state["notes"]
         if got and got[0] == 0:
-            _state["result"] = None          # this copy has its own newer commits: nothing to fetch
+            _state["result"] = None  # this copy has its own newer commits: nothing to fetch
             return None
-        _state["result"] = {"current": here[:7], "latest": top[:7], "behind": got[0] if got else None,
-                            "notes": got[1] if got else [], "url": f"https://github.com/{REPO}/commits/{BRANCH}",
-                            # the new files are already in the folder (git pull was run): only a restart is left
-                            "restart": on_disk == top}
+        _state["result"] = {
+            "current": here[:7],
+            "latest": top[:7],
+            "behind": got[0] if got else None,
+            "notes": got[1] if got else [],
+            "url": f"https://github.com/{REPO}/commits/{BRANCH}",
+            # the new files are already in the folder (git pull was run): only a restart is left
+            "restart": on_disk == top,
+        }
         return _state["result"]
 
 
@@ -118,7 +132,7 @@ def latest():
 
 
 def start():
-    """Look every minute, in the background, for as long as PeakCut runs."""
+    """Look every minute, in the background, for as long as RONB Clips runs."""
     global _started
     if not ON or _started:
         return
@@ -131,4 +145,5 @@ def start():
             except Exception:  # noqa: BLE001
                 pass
             time.sleep(EVERY)
+
     threading.Thread(target=loop, daemon=True).start()

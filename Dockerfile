@@ -1,22 +1,26 @@
-# PeakCut: one image with the web server, the clip pipeline and ffmpeg.
-FROM python:3.11-slim
+# RONB Clips: one image with the web server, the clip pipeline and ffmpeg.
+# Pinned to a digest so a rebuild cannot silently pick up a different base image. Update deliberately.
+FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg ca-certificates bzip2 fonts-noto-core fonts-noto-cjk \
+ && apt-get install -y --no-install-recommends \
+      ffmpeg=7:5.1.9-0+deb12u1 ca-certificates=20230311+deb12u1 bzip2=1.0.8-5+b1 \
+      fonts-noto-core=20201225-1 fonts-noto-cjk=1:20220127+repack1-1 \
  && rm -rf /var/lib/apt/lists/*
 # yt-dlp needs a JavaScript runtime for YouTube
-COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
+COPY --from=denoland/deno:bin@sha256:b507583d3c68ba69f3ed2ce5969ae5b8b70f43421c781279c7aea06435263543 /deno /usr/local/bin/deno
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt constraints.txt ./
+RUN python -m pip install --upgrade "pip==26.3" \
+ && python -m pip install --no-cache-dir -c constraints.txt -r requirements.txt
 COPY studio studio
 COPY web web
 
-ENV PEAKCUT_DATA=/data \
-    PEAKCUT_HOST=0.0.0.0 \
-    PEAKCUT_PORT=8765 \
-    PEAKCUT_TRUST_PROXY=1 \
+ENV RONBCLIPS_DATA=/data \
+    RONBCLIPS_HOST=0.0.0.0 \
+    RONBCLIPS_PORT=8765 \
+    RONBCLIPS_TRUST_PROXY=1 \
     PYTHONUNBUFFERED=1
 VOLUME /data
 EXPOSE 8765

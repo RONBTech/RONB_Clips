@@ -1,68 +1,136 @@
-"""Deleting clips, videos, creators and accounts, bulk actions and the zip download. Runs against the code directly,
-with its own empty data folder: nothing outside it is touched."""
-import os, sys, tempfile, zipfile
-os.environ["PEAKCUT_DATA"] = tempfile.mkdtemp(prefix="pc-del-"); os.environ["DATABASE_URL"] = ""
-sys.path.insert(0, ".")
+"""Deleting clips and videos with accounts off (one built-in local owner). Runs against the code directly with its
+own empty data folder: nothing outside it is touched. A second context id is used only to check that the helpers
+cannot reach another user's files through the current context.
+"""
+
+import os
+import shutil
+import sys
+import tempfile
+import zipfile
 from pathlib import Path
-import sqlalchemy as sa
-from studio import account, auth, config, creators, ctx, db, jobs
+
+os.environ["RONBCLIPS_DATA"] = tempfile.mkdtemp(prefix="pc-delete-")
+os.environ.update(
+    DATABASE_URL=os.environ.get("RONBCLIPS_TEST_DATABASE_URL", ""),
+    RONBCLIPS_ACCOUNTS="0",
+    RONBCLIPS_PUBLIC_URL="http://127.0.0.1:8765",
+    RONBCLIPS_FETCH_MODEL="0",
+    RONBCLIPS_UPDATE_CHECK="0",
+)
+sys.path.insert(0, ".")
+from fastapi.testclient import TestClient  # noqa: E402
+
+from studio import account, auth, creators, ctx, db, jobs, server  # noqa: E402
+
 db.init()
 fails = []
-def check(n, ok, x=""):
-    print(("PASS " if ok else "FAIL ") + n + (f"  {x}" if x else "")); ok or fails.append(n)
-a, _ = auth._create("a@example.com", "A", password_hash="x"); b, _ = auth._create("b@example.com", "B", password_hash="x")
+BASE = "http://127.0.0.1:8765"
+c = TestClient(server.app, base_url=BASE, follow_redirects=False)
+owner = auth.local_user()
+
+
+def check(name, got, expected):
+    ok = expected(got) if callable(expected) else got == expected
+    print(("PASS " if ok else "FAIL ") + name + ("" if ok else f"   got {got!r}"))
+    if not ok:
+        fails.append(name)
+
+
 def video(creator=None, n=3, status="done"):
     j = jobs.create({"type": "file", "path": "", "name": "v.mp4"}, {}, enqueue=False, creator=creator)
-    (Path(j["dir"]) / "clips").mkdir(parents=True, exist_ok=True)
+    clips = Path(j["dir"]) / "clips"
+    clips.mkdir(parents=True, exist_ok=True)
     for i in range(n):
-        cid = f"clip{i+1:02d}"
-        for ext in ("mp4", "jpg", "ass", "json", "src.ts"): (Path(j["dir"]) / "clips" / f"{cid}.{ext}").write_bytes(b"x" * 1000)
-        j["clips"].append({"id": cid, "status": "done", "file": f"{cid}.mp4", "cover": f"{cid}.jpg", "title": "Same title", "start": 0, "end": 10,
-                           "src": str(Path(j["dir"]) / "clips" / f"{cid}.src.ts")})
-    j["status"] = status; jobs.save(j); return j
-with ctx.as_user(a.id):
-    c = creators.create({"name": "Streamer"})
-    j1, j2, j3 = video(), video(c["id"]), video(status="running")
-    check("one clip is deleted with its files", account.delete_clip(j1["id"], "clip01") and not (Path(j1["dir"]) / "clips" / "clip01.mp4").exists() and len(jobs.get(j1["id"])["clips"]) == 2)
-    left = [e for e in ("ass", "json", "src.ts") if (Path(j1["dir"]) / "clips" / f"clip01.{e}").exists()]
-    check("...and its captions, notes and cut-out piece of video too", not left, str(left))
-    check("...while the other clips keep theirs", all((Path(j1["dir"]) / "clips" / f"clip02.{e}").exists() for e in ("ass", "json", "src.ts")))
-    j_own = video(n=1); jj = jobs.get(j_own["id"]); whole = Path(jj["dir"]) / "whole.mp4"; whole.write_bytes(b"x" * 1000)
-    jj["clips"][0]["src"] = str(whole); jobs.save(jj); account.delete_clip(jj["id"], "clip01")
-    check("the video's own file is never taken for a clip's piece", whole.exists())
+        cid = f"clip{i + 1:02d}"
+        for ext in ("mp4", "jpg", "ass", "json", "src.ts"):
+            (clips / f"{cid}.{ext}").write_bytes(b"x" * 1000)
+        j["clips"].append(
+            {
+                "id": cid,
+                "status": "done",
+                "file": f"{cid}.mp4",
+                "cover": f"{cid}.jpg",
+                "title": "Same title",
+                "start": 0,
+                "end": 10,
+                "src": str(clips / f"{cid}.src.ts"),
+            }
+        )
+    j["status"] = status
+    jobs.save(j)
+    return j
+
+
+# ---- a few videos to delete, filed under the local owner
+with ctx.as_user(owner.id):
+    creator = creators.create({"name": "Streamer"})
+    j1 = video()
+    j2 = video(creator["id"])
+    j3 = video(status="running")  # work in progress must be left alone
+    j4 = video(n=1)
+
+listed = [j["id"] for j in c.get("/api/jobs").json()]
+check("the local owner sees their videos", j1["id"] in listed and j4["id"] in listed, True)
+
+# ---- one clip and only its own files
+with ctx.as_user(owner.id):
+    check("one clip is deleted", account.delete_clip(j1["id"], "clip01"), True)
+clips1 = Path(j1["dir"]) / "clips"
+gone = [e for e in ("mp4", "jpg", "ass", "json", "src.ts") if (clips1 / f"clip01.{e}").exists()]
+check("its video, cover, captions, notes and cut-out piece are gone", gone, [])
+check("the other clips keep their files", all((clips1 / f"clip02.{e}").exists() for e in ("mp4", "ass", "json", "src.ts")), True)
+with ctx.as_user(owner.id):
+    check("the clip is gone from its video", [x["id"] for x in jobs.get(j1["id"])["clips"]], ["clip02", "clip03"])
+
+# ---- the whole video's own file is not a clip's cut-out piece
+whole = Path(j4["dir"]) / "whole.mp4"
+whole.write_bytes(b"x" * 1000)
+with ctx.as_user(owner.id):
+    jj = jobs.get(j4["id"])
+    jj["clips"][0]["src"] = str(whole)
+    jobs.save(jj)
+    check("deleting that clip still works", account.delete_clip(j4["id"], "clip01"), True)
+check("the video's own file is never taken", whole.exists(), True)
+
+# ---- a zip of several clips has one distinct name per clip
+with ctx.as_user(owner.id):
     z = account.zip_clips([(j1["id"], "clip02"), (j1["id"], "clip03"), (j2["id"], "clip01"), ("nope", "x")])
     names = zipfile.ZipFile(z).namelist()
-    check("several clips download as one zip with distinct names", len(names) == 3 and len(set(names)) == 3, str(names))
-    r = account.delete_many([j1["id"], j3["id"]], [(j2["id"], "clip01"), (j1["id"], "clip02")])
-    check("bulk delete removes videos and clips, leaves work in progress alone", r == {"videos": 1, "clips": 1, "skipped": 1}, str(r))
-    check("the deleted video's folder is gone", not Path(j1["dir"]).exists())
-with ctx.as_user(b.id):
-    check("someone else cannot delete my clip", not account.delete_clip(j2["id"], "clip02"))
+    check("several clips download as one zip with distinct names", (len(names), len(set(names))), (3, 3))
+    z.unlink(missing_ok=True)
+
+# ---- bulk delete leaves work in progress alone
+with ctx.as_user(owner.id):
+    result = account.delete_many([j1["id"], j3["id"]], [(j2["id"], "clip01"), (j1["id"], "clip02")])
+check("bulk delete counts videos, clips and skipped work", result, {"videos": 1, "clips": 1, "skipped": 1})
+check("the deleted video's folder is gone", not Path(j1["dir"]).exists(), True)
+check("an unfinished video is still there", Path(j3["dir"]).exists(), True)
+
+# ---- a creator's videos go with it
+with ctx.as_user(owner.id):
+    removed = account.delete_creator(creator["id"])
+    check("deleting a creator removes their videos", (removed["ok"], removed["videos"]), (True, 1))
+    check("the creator is gone", (creators.get(creator["id"]) is None, not creators.root(creator["id"]).exists()), (True, True))
+
+# ---- another context's files cannot be reached from the local owner's context
+OTHER = "u_other"
+with ctx.as_user(OTHER):
+    other = video(n=1)
+other_file = Path(other["dir"]) / "clips" / "clip01.mp4"
+with ctx.as_user(owner.id):
+    check("another user's clip cannot be deleted", account.delete_clip(other["id"], "clip01"), False)
+    check("another user's video cannot be deleted", account.delete_many([other["id"]], []), {"videos": 0, "clips": 0, "skipped": 0})
     try:
-        account.zip_clips([(j2["id"], "clip02")]); ok = False
-    except ValueError: ok = True
-    check("someone else cannot download my clips", ok)
-    check("someone else cannot delete my creator", account.delete_creator(c["id"]) == {"ok": False})
-with ctx.as_user(a.id):
-    r = account.delete_creator(c["id"])
-    check("deleting a creator removes their videos and folder", r["ok"] and r["videos"] == 1 and not jobs.get(j2["id"]) and not creators.get(c["id"]) and not creators.root(c["id"]).exists(), str(r))
-    try:
-        account.delete_account(a.id); ok = False
-    except account.Busy: ok = True
-    check("an account with a video in progress is not deleted", ok)
-    j = jobs.get(j3["id"]); j["status"] = "done"; jobs.save(j)
-udir = config.user_dir(a.id)
-from studio import posting
-posting._posts.extend([{"id": "pa", "user": a.id, "status": "scheduled", "due_at": 0}, {"id": "pb", "user": b.id, "status": "scheduled", "due_at": 0}])
-check("the account is deleted", account.delete_account(a.id)["ok"] and auth.get_user(a.id) is None and not udir.exists())
-with db.engine.connect() as cn:
-    left = {t.name: cn.execute(sa.select(sa.func.count()).select_from(t).where(t.c.user_id == a.id)).scalar() for t in db.meta.sorted_tables if "user_id" in t.c}
-check("nothing of theirs is left in the database", not any(left.values()), str(left))
-check("the other account is untouched", auth.get_user(b.id) is not None and config.user_dir(b.id).exists())
-check("posts waiting for the deleted account are gone, the other account's stay",
-      [p["id"] for p in posting._posts] == ["pb"] and "pa" not in posting._FILE.read_text(encoding="utf-8"))
-a2, _ = auth._create("A@example.com", "A again", password_hash="x")
-check("the same email can sign up again afterwards, as a new account", a2.id != a.id)
+        account.zip_clips([(other["id"], "clip01")])
+        zipped_other = False
+    except ValueError:
+        zipped_other = True
+    check("another user's clips cannot be downloaded", zipped_other, True)
+check("the other context's files are untouched", other_file.exists(), True)
+check("the other context's folder is untouched", Path(other["dir"]).exists(), True)
+
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
-import shutil; shutil.rmtree(os.environ["PEAKCUT_DATA"], ignore_errors=True)
+db.engine.dispose()
+shutil.rmtree(os.environ["RONBCLIPS_DATA"], ignore_errors=True)
 sys.exit(1 if fails else 0)

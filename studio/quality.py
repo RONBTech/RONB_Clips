@@ -36,11 +36,23 @@ def motion_map(path: str | Path, bucket: float = 2.0) -> list[tuple[float, float
     frozen screen, high for anything actually moving."""
     try:
         proc = subprocess.run(
-            [_FFMPEG, "-hide_banner", "-loglevel", "error",
-             "-i", str(path),
-             "-vf", "tblend=all_mode=difference,signalstats,metadata=print:file=-",
-             "-an", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=900,
+            [
+                _FFMPEG,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(path),
+                "-vf",
+                "tblend=all_mode=difference,signalstats,metadata=print:file=-",
+                "-an",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=900,
         )
     except Exception:  # noqa: BLE001 - a missing ffmpeg must not stop a job
         return []
@@ -57,17 +69,18 @@ def motion_map(path: str | Path, bucket: float = 2.0) -> list[tuple[float, float
             times.append(at)
             vals.append(float(m.group(1)))
     if len(vals) > 1:
-        times, vals = times[1:], vals[1:]      # the first blended frame is against black
+        times, vals = times[1:], vals[1:]  # the first blended frame is against black
     if not vals:
         return []
     buckets: dict[int, list[float]] = {}
-    for t, v in zip(times, vals):
+    for t, v in zip(times, vals, strict=False):
         buckets.setdefault(int(t / bucket), []).append(v)
     return [(i * bucket, sum(v) / len(v)) for i, v in sorted(buckets.items())]
 
 
-def static_ranges(path: str | Path, bucket: float = 2.0, threshold: float | None = None,
-                  min_seconds: float | None = None) -> list[tuple[float, float]]:
+def static_ranges(
+    path: str | Path, bucket: float = 2.0, threshold: float | None = None, min_seconds: float | None = None
+) -> list[tuple[float, float]]:
     """The stretches that look like an ad break, a slate or a frozen screen."""
     threshold = config.STATIC_THRESHOLD if threshold is None else threshold
     min_seconds = config.STATIC_MIN_SECONDS if min_seconds is None else min_seconds

@@ -1,16 +1,17 @@
 """The line under load: holds while the server is near full, moves the moment it is not. Usage: test_load_queue.py <root>"""
+
 import os
 import sys
 import tempfile
 import threading
 import time
 
-os.environ["PEAKCUT_DATA"] = tempfile.mkdtemp()
+os.environ["RONBCLIPS_DATA"] = tempfile.mkdtemp()
 sys.path.insert(0, sys.argv[1])
 from studio import config, jobs, load  # noqa: E402
 
 load.MIN_FREE_RAM_GB = 0.0  # this checks the processor; how much memory the test machine has free is not the point
-config.JOB_WORKERS = 8      # the ceiling on videos at once; the test is about load, not about how many cores this machine has
+config.JOB_WORKERS = 8  # the ceiling on videos at once; the test is about load, not about how many cores this machine has
 
 fails = []
 
@@ -71,9 +72,17 @@ if __name__ == "__main__":
     t_free = time.time()
     load._force = False
     time.sleep(2.2)
-    check("server frees up: the next video starts at once", len(started) == 2, f"{started[1][1] - t_free:.1f}s after it freed up" if len(started) > 1 else f"started {len(started)}")
+    check(
+        "server frees up: the next video starts at once",
+        len(started) == 2,
+        f"{started[1][1] - t_free:.1f}s after it freed up" if len(started) > 1 else f"started {len(started)}",
+    )
     time.sleep(14)
-    check("the rest follow a few seconds apart, not all at once", len(started) == 4, f"gaps {[round(b[1] - a[1], 1) for a, b in zip(started, started[1:])]}")
+    check(
+        "the rest follow a few seconds apart, not all at once",
+        len(started) == 4,
+        f"gaps {[round(b[1] - a[1], 1) for a, b in zip(started, started[1:], strict=False)]}",
+    )
     release.set()
     time.sleep(1.5)
     check("line is empty and nothing is held", q.running == 0 and not q.turn)

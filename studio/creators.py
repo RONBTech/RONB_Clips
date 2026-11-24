@@ -1,4 +1,5 @@
 """Creator workspaces. Each user has their own: users/<user>/creators/<id>/{videos,live,creator.json,log.jsonl}."""
+
 import copy
 import json
 import re
@@ -12,20 +13,47 @@ from . import config, ctx
 def _root() -> Path:
     return config.user_dir(ctx.uid()) / "creators"
 
+
 _lock = threading.RLock()
 
-DEFAULTS = {"name": "", "channel": "", "style": "bounce", "layout": "blur", "captions": True, "min_len": 15, "max_len": 60,
-            "max_clips": 6, "min_score": 80, "auto_watch": False, "buffer_min": 20, "live_per_hour": 4, "ai_every_min": 3, "ai_only_on_spike": True, "auto_jump_pct": 60,
-            "plan": "free", "decide_mode": "both", "must_clip_min": 0, "min_gap_min": 2,
-            "game": "",
-            "trigger_words": "clip that, clip it",
-            "autopost": False, "accounts": [], "post_min_score": 75, "post_gap_min": 45, "daily_cap": 6,
-            "privacy": "public", "post_footer": "", "rate_per_1k": 0.0, "channels": {}}
+DEFAULTS = {
+    "name": "",
+    "channel": "",
+    "style": "bounce",
+    "layout": "blur",
+    "captions": True,
+    "min_len": 15,
+    "max_len": 60,
+    "max_clips": 6,
+    "min_score": 80,
+    "auto_watch": False,
+    "buffer_min": 20,
+    "live_per_hour": 4,
+    "ai_every_min": 3,
+    "ai_only_on_spike": True,
+    "auto_jump_pct": 60,
+    "plan": "free",
+    "decide_mode": "both",
+    "must_clip_min": 0,
+    "min_gap_min": 2,
+    "game": "",
+    "trigger_words": "clip that, clip it",
+    "autopost": False,
+    "accounts": [],
+    "post_min_score": 75,
+    "post_gap_min": 45,
+    "daily_cap": 6,
+    "privacy": "public",
+    "post_footer": "",
+    "rate_per_1k": 0.0,
+    "channels": {},
+}
 PLATFORMS = ("youtube", "twitch", "kick")
 
 
 def platform_key(url: str) -> str:
     from urllib.parse import urlparse
+
     h = (urlparse(url if "://" in url else "https://" + url).hostname or "").lower()
     return "youtube" if "youtube" in h or h == "youtu.be" else "twitch" if "twitch" in h else "kick" if "kick" in h else ""
 
@@ -37,12 +65,27 @@ def _fix(c: dict) -> dict:
         ch.setdefault(platform_key(c["channel"]), c["channel"])
     c["channels"] = ch
     if not c.get("ai_every_min"):
-        c["ai_every_min"] = 3       # "Auto" (0) is gone: jumps in loudness and chat are now always checked
+        c["ai_every_min"] = 3  # "Auto" (0) is gone: jumps in loudness and chat are now always checked
     if c.get("channel") not in ch.values():
         c["channel"] = next((ch[k] for k in PLATFORMS if k in ch), "")
     return c
-NUMERIC = {"min_len": (5, 120), "max_len": (10, 180), "max_clips": (1, 20), "min_score": (0, 100), "buffer_min": (5, 120), "live_per_hour": (1, 60), "ai_every_min": (1, 30), "auto_jump_pct": (20, 300), "must_clip_min": (0, 240), "min_gap_min": (0, 60),
-           "post_min_score": (0, 100), "post_gap_min": (5, 1440), "daily_cap": (1, 50)}
+
+
+NUMERIC = {
+    "min_len": (5, 120),
+    "max_len": (10, 180),
+    "max_clips": (1, 20),
+    "min_score": (0, 100),
+    "buffer_min": (5, 120),
+    "live_per_hour": (1, 60),
+    "ai_every_min": (1, 30),
+    "auto_jump_pct": (20, 300),
+    "must_clip_min": (0, 240),
+    "min_gap_min": (0, 60),
+    "post_min_score": (0, 100),
+    "post_gap_min": (5, 1440),
+    "daily_cap": (1, 50),
+}
 
 
 def root(cid) -> Path:
@@ -86,7 +129,7 @@ def _clean(data: dict) -> dict:
     return out
 
 
-_mem: dict = {}   # user -> {creator id: creator}. The files stay the truth; this saves re-reading them on every page check.
+_mem: dict = {}  # user -> {creator id: creator}. The files stay the truth; this saves re-reading them on every page check.
 
 
 def _mine() -> dict:
@@ -108,6 +151,10 @@ def _mine() -> dict:
 def forget(uid: str):
     """Files were changed from outside this module (old data moved in): read them again next time."""
     _mem.pop(uid, None)
+    prefix = str(config.user_dir(uid) / "creators")
+    with _lock:
+        for path in [k for k in _log_cache if k.startswith(prefix)]:
+            _log_cache.pop(path, None)
     ctx.bump(uid)
 
 
@@ -165,7 +212,7 @@ def update(cid, data: dict) -> dict:
     return c
 
 
-def set_profiles(cid, profiles: dict, extra: dict = None):
+def set_profiles(cid, profiles: dict, extra: dict | None = None):
     """Each channel's public profile and live state, written by profiles.refresh. `profile` is the recording
     channel's one, used for the creator's picture."""
     with _lock:
@@ -178,8 +225,9 @@ def set_profiles(cid, profiles: dict, extra: dict = None):
         c["profile"] = c["profiles"].get(main) or next(iter(c["profiles"].values()), {})
         c.update(extra or {})
         same = re.sub(r'"live_at": [\d.]+', "", before) == re.sub(
-            r'"live_at": [\d.]+', "", json.dumps([c["profiles"], {k: c.get(k) for k in (extra or {})}], sort_keys=True, default=str))
-        if same:       # only "checked just now" moved on: remember it, but there is nothing new to save or show
+            r'"live_at": [\d.]+', "", json.dumps([c["profiles"], {k: c.get(k) for k in (extra or {})}], sort_keys=True, default=str)
+        )
+        if same:  # only "checked just now" moved on: remember it, but there is nothing new to save or show
             _mine()[c["id"]] = copy.deepcopy(c)
             return
         _write(c)
@@ -193,7 +241,7 @@ def log(cid, msg: str):
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"t": time.time(), "msg": msg}) + "\n")
         try:
-            if path.stat().st_size > LOG_MAX_BYTES:         # a stream that runs for weeks must not grow this for ever
+            if path.stat().st_size > LOG_MAX_BYTES:  # a stream that runs for weeks must not grow this for ever
                 keep = path.read_text(encoding="utf-8", errors="ignore").splitlines()[-LOG_KEEP_LINES:]
                 path.write_text("\n".join(keep) + "\n", encoding="utf-8")
         except OSError:
@@ -203,24 +251,41 @@ def log(cid, msg: str):
 
 LOG_MAX_BYTES, LOG_KEEP_LINES, LOG_TAIL_BYTES = 1_000_000, 500, 64 * 1024
 
+# The newest lines of each creator's log, kept until that file changes. The page asks for every creator's log on
+# every check, and a busy stream is read far more often than it is written.
+_log_cache: dict = {}
+
 
 def read_log(cid, n=40) -> list:
-    """The newest n lines, newest first. Only the end of the file is read: the page asks for this all the time."""
+    """The newest n lines, newest first. Only the end of the file is read, and only when the file has changed since
+    the last time it was asked for."""
     f = root(cid) / "log.jsonl"
     try:
-        size = f.stat().st_size
+        st = f.stat()
+    except OSError:
+        return []
+    key = (st.st_size, st.st_mtime_ns)
+    whole = st.st_size <= LOG_TAIL_BYTES  # the end of the file is all of it: nothing is left behind
+    with _lock:
+        seen = _log_cache.get(str(f))
+        if seen and seen[0] == key and (seen[2] or len(seen[1]) >= n):
+            return seen[1][:n]
+    try:
         with f.open("rb") as h:
-            h.seek(max(0, size - LOG_TAIL_BYTES))
+            h.seek(max(0, st.st_size - LOG_TAIL_BYTES))
             raw = h.read()
     except OSError:
         return []
     lines = raw.decode("utf-8", errors="ignore").splitlines()
-    if size > LOG_TAIL_BYTES:
-        lines = lines[1:]                                   # the first one starts in the middle of a line
+    if not whole:
+        lines = lines[1:]  # the first one starts in the middle of a line
+    want = lines[-max(n, 40) :]
     out = []
-    for x in reversed(lines[-n:]):
+    for x in reversed(want):
         try:
             out.append(json.loads(x))
         except ValueError:
             pass
-    return out
+    with _lock:
+        _log_cache[str(f)] = (key, out, len(want) >= len(lines))  # the last flag: nothing was left out
+    return out[:n]

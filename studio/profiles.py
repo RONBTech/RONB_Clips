@@ -3,6 +3,7 @@
 YouTube and Twitch put the name and picture in the channel page's share tags (YouTube also shows the subscriber
 count there); Kick has a public JSON endpoint with all three. Twitch does not show followers publicly, so that
 one comes back without a count. Everything here is best effort: a creator works the same without a profile."""
+
 import base64
 import json
 import re
@@ -13,17 +14,19 @@ from urllib.parse import urlparse
 
 from . import creators, ctx
 
-UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-      "Accept-Language": "en-US,en;q=0.9"}
+UA = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 PIC_HOSTS = ("yt3.googleusercontent.com", "yt3.ggpht.com", "static-cdn.jtvnw.net", "files.kick.com")
 MAX_PIC = 600_000
 
 from concurrent.futures import ThreadPoolExecutor
 
-_pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="profiles")   # lookups never pile up as thousands of threads
-_live: dict = {}          # channel link -> (when, result): everyone watching the same channel shares one check
+_pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="profiles")  # lookups never pile up as thousands of threads
+_live: dict = {}  # channel link -> (when, result): everyone watching the same channel shares one check
 _live_locks: dict = {}
-LIVE_SHARED_FOR = 75      # seconds a live check is reused for every user
+LIVE_SHARED_FOR = 75  # seconds a live check is reused for every user
 
 _cache: dict = {}
 _busy: set = set()
@@ -33,8 +36,11 @@ _lock = threading.Lock()
 
 
 def _get(url: str, accept: str = "text/html", limit: int = 3_000_000):
+    if not url.startswith("https://"):  # never let a page we read point us at file:// or a local address
+        raise ValueError("Only https addresses are fetched.")
     req = urllib.request.Request(url, headers={**UA, "Accept": accept})
-    with urllib.request.urlopen(req, timeout=10) as r:
+    # The scheme was checked just above.
+    with urllib.request.urlopen(req, timeout=10) as r:  # nosec B310
         return r.headers.get("Content-Type") or "", r.read(limit)
 
 
@@ -77,7 +83,7 @@ def fetch(channel: str) -> dict:
     plat = platform_of(url)
     got = _cache.get(url)
     if got and time.time() - got[0] < (3600 if got[1] else 60):
-        if got[1] is None:       # it failed a moment ago for someone: don't ask the platform again for every user
+        if got[1] is None:  # it failed a moment ago for someone: don't ask the platform again for every user
             raise ValueError("Couldn't find that channel. Check the link.")
         return got[1]
     try:
@@ -96,8 +102,12 @@ def _fetch(url: str, plat: str) -> dict:
         d = json.loads(raw)
         user = d.get("user") or {}
         n = str(d.get("followers_count") or "").strip()  # Kick sends this as text
-        out = {"platform": plat, "name": user.get("username") or slug,
-               "followers": f"{_short(int(n))} followers" if n.isdigit() else "", "pic_url": user.get("profile_pic") or ""}
+        out = {
+            "platform": plat,
+            "name": user.get("username") or slug,
+            "followers": f"{_short(int(n))} followers" if n.isdigit() else "",
+            "pic_url": user.get("profile_pic") or "",
+        }
     elif plat == "Twitch" and (tw := _twitch_profile(url)):
         out = tw
     elif plat in ("YouTube", "Twitch"):
@@ -110,7 +120,7 @@ def _fetch(url: str, plat: str) -> dict:
             raise ValueError("Couldn't find that channel. Check the link.")
         subs = ""
         if plat == "YouTube":
-            m = re.search(r'"content":"([\d.,]+[KMB]?) subscribers"', html) or re.search(r'([\d.,]+[KMB]?) subscribers', html)
+            m = re.search(r'"content":"([\d.,]+[KMB]?) subscribers"', html) or re.search(r"([\d.,]+[KMB]?) subscribers", html)
             subs = f"{m.group(1)} subscribers" if m else ""
         out = {"platform": plat, "name": name[:80], "followers": subs, "pic_url": _meta(html, "og:image")}
     else:
@@ -129,12 +139,16 @@ def preview(channel: str) -> dict:
     """For the browser: the same, with the picture inline."""
     p = fetch(channel)
     pic = p.get("pic")
-    return {"platform": p["platform"], "name": p["name"], "followers": p["followers"],
-            "pic": f"data:{pic[1]};base64," + base64.b64encode(pic[0]).decode() if pic else ""}
+    return {
+        "platform": p["platform"],
+        "name": p["name"],
+        "followers": p["followers"],
+        "pic": f"data:{pic[1]};base64," + base64.b64encode(pic[0]).decode() if pic else "",
+    }
 
 
-LIVE_EVERY = 120        # seconds between "are they live?" checks while the app is open
-PROFILE_EVERY = 86400   # name, picture and followers change rarely
+LIVE_EVERY = 120  # seconds between "are they live?" checks while the app is open
+PROFILE_EVERY = 86400  # name, picture and followers change rarely
 
 
 # The public client id Twitch's own website uses (yt-dlp uses it too). Asks one question, gets the answer in ~1s;
@@ -144,14 +158,17 @@ _TWITCH_WEB = "kimne78kx3ncx6brgo4mv6wki5h1ko"
 
 def _twitch_live(login: str, off: dict) -> dict:
     import calendar
+
     import httpx
-    q = 'query($l:String!){user(login:$l){login stream{title viewersCount createdAt type}}}'
-    r = httpx.post("https://gql.twitch.tv/gql", json={"query": q, "variables": {"l": login}},
-                   headers={"Client-ID": _TWITCH_WEB, **UA}, timeout=8)
+
+    q = "query($l:String!){user(login:$l){login stream{title viewersCount createdAt type}}}"
+    r = httpx.post(
+        "https://gql.twitch.tv/gql", json={"query": q, "variables": {"l": login}}, headers={"Client-ID": _TWITCH_WEB, **UA}, timeout=8
+    )
     r.raise_for_status()
     user = ((r.json() or {}).get("data") or {}).get("user")
     if user is None:
-        return off                                   # no such channel
+        return off  # no such channel
     st = user.get("stream")
     if not st or st.get("type") != "live":
         return off
@@ -160,8 +177,13 @@ def _twitch_live(login: str, off: dict) -> dict:
         started = calendar.timegm(time.strptime(st["createdAt"], "%Y-%m-%dT%H:%M:%SZ"))
     except Exception:  # noqa: BLE001
         pass
-    return {"live": True, "viewers": st.get("viewersCount"), "title": (st.get("title") or "")[:140], "started": started,
-            "embed": (user.get("login") or login).lower()}
+    return {
+        "live": True,
+        "viewers": st.get("viewersCount"),
+        "title": (st.get("title") or "")[:140],
+        "started": started,
+        "embed": (user.get("login") or login).lower(),
+    }
 
 
 def _twitch_profile(url: str):
@@ -171,9 +193,11 @@ def _twitch_profile(url: str):
         return None
     try:
         import httpx
-        q = 'query($l:String!){user(login:$l){login displayName profileImageURL(width:300) followers{totalCount}}}'
-        r = httpx.post("https://gql.twitch.tv/gql", json={"query": q, "variables": {"l": login}},
-                       headers={"Client-ID": _TWITCH_WEB, **UA}, timeout=8)
+
+        q = "query($l:String!){user(login:$l){login displayName profileImageURL(width:300) followers{totalCount}}}"
+        r = httpx.post(
+            "https://gql.twitch.tv/gql", json={"query": q, "variables": {"l": login}}, headers={"Client-ID": _TWITCH_WEB, **UA}, timeout=8
+        )
         r.raise_for_status()
         u = ((r.json() or {}).get("data") or {}).get("user")
     except Exception:  # noqa: BLE001 - the channel page is read instead
@@ -181,17 +205,24 @@ def _twitch_profile(url: str):
     if not u:
         return None
     n = (u.get("followers") or {}).get("totalCount")
-    out = {"platform": "Twitch", "name": (u.get("displayName") or login)[:80],
-           "followers": f"{_short(int(n))} followers" if isinstance(n, int) else "", "pic_url": u.get("profileImageURL") or ""}
+    out = {
+        "platform": "Twitch",
+        "name": (u.get("displayName") or login)[:80],
+        "followers": f"{_short(int(n))} followers" if isinstance(n, int) else "",
+        "pic_url": u.get("profileImageURL") or "",
+    }
     return out
 
 
 def _ydl_info(url: str) -> dict:
     """Live details from yt-dlp without downloading anything (no formats are fetched)."""
     import yt_dlp
+
     from .live import _Quiet
-    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True,
-                           "logger": _Quiet(), "socket_timeout": 10}) as y:
+
+    with yt_dlp.YoutubeDL(
+        {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True, "logger": _Quiet(), "socket_timeout": 10}
+    ) as y:
         return y.extract_info(url, download=False) or {}
 
 
@@ -215,6 +246,7 @@ def live_now(platform: str, url: str) -> dict:
         started = None
         try:
             import calendar
+
             started = calendar.timegm(time.strptime(ls.get("start_time") or ls.get("created_at"), "%Y-%m-%d %H:%M:%S"))
         except Exception:
             pass
@@ -229,8 +261,12 @@ def live_now(platform: str, url: str) -> dict:
         out = {"live": True, "viewers": None, "title": _meta(html, "og:title"), "started": None, "embed": vid}
         try:
             i = _ydl_info(base + "/live")
-            out.update(viewers=i.get("concurrent_view_count"), title=_no_date(i.get("title")) or out["title"],
-                       started=i.get("release_timestamp") or i.get("timestamp"), embed=i.get("id") or vid)
+            out.update(
+                viewers=i.get("concurrent_view_count"),
+                title=_no_date(str(i.get("title") or "")) or out["title"],
+                started=i.get("release_timestamp") or i.get("timestamp"),
+                embed=i.get("id") or vid,
+            )
         except Exception:
             pass
         return out
@@ -247,11 +283,16 @@ def live_now(platform: str, url: str) -> dict:
             return off
         if not i.get("is_live"):
             return off
-        title = _no_date(i.get("title"))
+        title = _no_date(str(i.get("title") or ""))
         if (not title or title.lower() == (i.get("uploader_id") or "").lower()) and i.get("description"):
-            title = str(i["description"]).splitlines()[0][:140]   # Twitch keeps the real stream title here
-        return {"live": True, "viewers": i.get("concurrent_view_count"), "title": title,
-                "started": i.get("timestamp"), "embed": (i.get("uploader_id") or path[0]).lower()}
+            title = str(i["description"]).splitlines()[0][:140]  # Twitch keeps the real stream title here
+        return {
+            "live": True,
+            "viewers": i.get("concurrent_view_count"),
+            "title": title,
+            "started": i.get("timestamp"),
+            "embed": (i.get("uploader_id") or path[0]).lower(),
+        }
     return off
 
 
@@ -264,7 +305,7 @@ def live_shared(platform: str, url: str) -> dict:
         return dict(got[1])
     with _lock:
         lock = _live_locks.setdefault(key, threading.Lock())
-    with lock:                                   # the first asker looks it up; the rest wait for that answer
+    with lock:  # the first asker looks it up; the rest wait for that answer
         got = _live.get(key)
         if got and time.time() - got[0] < LIVE_SHARED_FOR:
             return dict(got[1])
@@ -301,8 +342,14 @@ def _profiles(cid, c, old, lives, force, now) -> dict:
                 pic = f.get("pic")
                 if pic:
                     (creators.root(cid) / f"avatar-{key_}.img").write_bytes(pic[0])
-                p.update(platform=f["platform"], name=f["name"], followers=f["followers"],
-                         pic=pic[1] if pic else p.get("pic", ""), channel=url, at=now)
+                p.update(
+                    platform=f["platform"],
+                    name=f["name"],
+                    followers=f["followers"],
+                    pic=pic[1] if pic else p.get("pic", ""),
+                    channel=url,
+                    at=now,
+                )
         except Exception:
             p.setdefault("platform", platform_of(url))
             p.setdefault("channel", url)
@@ -340,9 +387,10 @@ def refresh(cid: str, force: bool = False):
                 out, now = {}, time.time()
                 if force:
                     for url in c["channels"].values():
-                        _live.pop(url.rstrip("/").lower(), None)   # asked for now: don't use an answer from before
+                        _live.pop(url.rstrip("/").lower(), None)  # asked for now: don't use an answer from before
                 # "are they live?" for every channel at once, while the pictures are fetched below
                 from concurrent.futures import ThreadPoolExecutor
+
                 with ThreadPoolExecutor(max(1, len(c["channels"]))) as ex:
                     lives = {k: ex.submit(live_shared, platform_of(u), u) for k, u in c["channels"].items()}
                     out = _profiles(cid, c, old, lives, force, now)
