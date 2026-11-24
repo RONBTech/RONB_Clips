@@ -17,6 +17,7 @@ def check(ok, message):
     print(("PASS " if ok else "FAIL ") + message)
     if not ok:
         fails.append(message)
+        print(f"::error title=frontend integrity::{message}", flush=True)
 
 
 html = (WEB / "index.html").read_text(encoding="utf-8")
