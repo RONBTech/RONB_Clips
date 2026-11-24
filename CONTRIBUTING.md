@@ -29,7 +29,8 @@ For details about data, environment settings, architecture and migrations, see [
 - Treat video titles, captions, chat and transcripts as untrusted input.
 - Use the existing database migration runner for schema changes. A migration must work on SQLite and PostgreSQL unless the change explicitly documents otherwise.
 - Add or update focused tests for behavior changes. Run `python tests/run.py` after changes to `studio/`.
-- Run `python scripts/frontend_checks.py` and `python scripts/e2e_browser.py` for frontend changes.
+- After changing frontend assets, run `python scripts/update_asset_manifest.py`, then run
+  `python scripts/frontend_checks.py` and `python scripts/e2e_browser.py`.
 - Before opening a PR, run the checks relevant to the change and report any check that could not run.
 
 ## Pull requests

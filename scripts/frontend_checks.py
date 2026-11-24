@@ -50,9 +50,22 @@ for ref in refs:
 for ref, target in resolved:
     check(target.is_file() and WEB.resolve() in target.parents, f"Local asset resolves: {ref}")
 manifest = json.loads((WEB / "asset-manifest.json").read_text(encoding="utf-8"))
+manifest_assets = sorted(
+    [f"assets/{p.name}" for p in assets] + ["assets/index.css"] + [f"brand/{p.name}" for p in (WEB / "brand").iterdir() if p.is_file()]
+)
+check(sorted(manifest) == manifest_assets, "Asset manifest lists every shipped local asset exactly once")
 for name, digest in manifest.items():
     path = WEB / name
-    check(path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == digest, f"Asset manifest hash matches: {name}")
+    if not path.is_file():
+        check(False, f"Asset manifest file exists: {name}")
+        continue
+    content = path.read_bytes()
+    if path.suffix.lower() in {".css", ".html", ".js", ".svg"}:
+        # Git and editors may check text assets out with CRLF on Windows. Hash the served LF form so the check
+        # produces the same result on Windows, macOS and Linux.
+        content = content.replace(b"\r\n", b"\n")
+    actual = hashlib.sha256(content).hexdigest()
+    check(actual == digest, f"Asset manifest hash matches: {name}" + ("" if actual == digest else f" (expected {digest}, found {actual})"))
 size = sum(p.stat().st_size for p in assets) + (WEB / "assets/index.css").stat().st_size
 check(size <= MAX_BUNDLE_BYTES, f"Local JS/CSS size {size:,} bytes <= {MAX_BUNDLE_BYTES:,} byte budget")
 print("Summary: " + ("FAIL" if fails else "PASS"))
